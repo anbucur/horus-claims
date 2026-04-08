@@ -21,6 +21,8 @@ public class ClaimWorkflowStateMachine {
         DUPLICATE_CHECK,
         HITL_REVIEW,
         STP,
+        APPROVED,
+        REJECTED,
         COMPLETED
     }
     
@@ -121,10 +123,12 @@ public class ClaimWorkflowStateMachine {
             case VERIFYING -> WorkflowStep.VERIFYING;
             case HITL -> WorkflowStep.HITL_REVIEW;
             case STP -> WorkflowStep.STP;
+            case APPROVED -> WorkflowStep.APPROVED;
+            case REJECTED -> WorkflowStep.REJECTED;
             case COMPLETED -> WorkflowStep.COMPLETED;
         };
     }
-    
+
     public Claim.WorkflowStatus mapStepToWorkflowStatus(WorkflowStep step) {
         return switch (step) {
             case RECEIVED -> Claim.WorkflowStatus.RECEIVED;
@@ -133,6 +137,8 @@ public class ClaimWorkflowStateMachine {
             case ENTITY_MATCHING, FORENSICS, DUPLICATE_CHECK -> Claim.WorkflowStatus.VERIFYING;
             case HITL_REVIEW -> Claim.WorkflowStatus.HITL;
             case STP -> Claim.WorkflowStatus.STP;
+            case APPROVED -> Claim.WorkflowStatus.APPROVED;
+            case REJECTED -> Claim.WorkflowStatus.REJECTED;
             case COMPLETED -> Claim.WorkflowStatus.COMPLETED;
         };
     }

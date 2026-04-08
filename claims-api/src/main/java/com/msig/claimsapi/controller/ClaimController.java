@@ -1,6 +1,7 @@
 package com.msig.claimsapi.controller;
 
 import com.msig.claimsapi.service.ClaimService;
+import com.msig.claimsapi.service.audit.ClaimAuditService;
 import com.msig.claimsdomain.entities.Claim;
 import com.msig.claimsdomain.entities.Claim.WorkflowStatus;
 import lombok.RequiredArgsConstructor;
@@ -8,6 +9,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import com.msig.claimsdomain.entities.ClaimStatusHistory;
 
 import java.util.List;
 import java.util.Map;
@@ -19,6 +23,7 @@ import java.util.Map;
 public class ClaimController {
 
     private final ClaimService claimService;
+    private final ClaimAuditService auditService;
 
     @GetMapping
     public ResponseEntity<List<Claim>> getAllClaims() {
@@ -92,5 +97,11 @@ public class ClaimController {
         log.info("DELETE /api/claims/{} - deleting claim", id);
         claimService.deleteById(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/history")
+    public ResponseEntity<List<ClaimStatusHistory>> getClaimHistory(@PathVariable Long id) {
+        log.debug("GET /api/claims/{}/history - retrieving claim history", id);
+        return ResponseEntity.ok(auditService.getClaimHistory(id));
     }
 }

@@ -1,12 +1,13 @@
 package com.msig.claimsapi.service.ai;
 
-import com.azure.ai.inference.ChatCompletionsClient;
-import com.azure.ai.inference.ChatCompletionsClientBuilder;
-import com.azure.ai.inference.models.ChatCompletionsOptions;
-import com.azure.ai.inference.models.ChatCompletions;
-import com.azure.ai.inference.models.ChatRequestMessage;
-import com.azure.ai.inference.models.ChatRequestSystemMessage;
-import com.azure.ai.inference.models.ChatRequestUserMessage;
+import com.azure.ai.openai.OpenAIClient;
+import com.azure.ai.openai.OpenAIClientBuilder;
+import com.azure.ai.openai.models.ChatCompletions;
+import com.azure.ai.openai.models.ChatCompletionsOptions;
+import com.azure.ai.openai.models.ChatRequestAssistantMessage;
+import com.azure.ai.openai.models.ChatRequestMessage;
+import com.azure.ai.openai.models.ChatRequestSystemMessage;
+import com.azure.ai.openai.models.ChatRequestUserMessage;
 import com.azure.core.credential.AzureKeyCredential;
 import com.azure.core.credential.TokenCredential;
 import com.azure.identity.DefaultAzureCredentialBuilder;
@@ -17,18 +18,20 @@ import com.msig.claimsdomain.model.ClaimSimilarityResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import jakarta.annotation.PostConstruct;
 import java.util.*;
 
 /**
- * Real Azure AI client using the Azure AI Foundry SDK (azure-ai-inference).
+ * Real Azure AI client using the Azure AI Foundry SDK (azure-ai-projects v2.0.0).
+ *
+ * Uses AIProjectClient to obtain an OpenAI-compatible client (Chat Completions API)
+ * for model inference. This replaces the deprecated azure-ai-inference SDK.
  *
  * Activates only when claims.azure.ai.enabled=true.
- * Requires AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_API_KEY (or DefaultAzureCredential) env vars.
  *
- * Swap-in replacement for MockAIClient.
+ * Endpoint: https://<resource>.services.ai.azure.com/api/projects/<project>
+ * Auth:     API key (AzureKeyCredential) OR DefaultAzureCredential (Entra ID)
  */
 @Service
 @Slf4j
@@ -37,46 +40,48 @@ public class RealAzureAIClient implements AIClient {
 
     private final AzureAIConfig config;
     private final ObjectMapper objectMapper;
-    private final RestTemplate restTemplate;
-    private ChatCompletionsClient chatClient;
+    private OpenAIClient openAIClient;
 
-    public RealAzureAIClient(AzureAIConfig config, ObjectMapper objectMapper, RestTemplate restTemplate) {
+    public RealAzureAIClient(AzureAIConfig config, ObjectMapper objectMapper) {
         this.config = config;
         this.objectMapper = objectMapper;
-        this.restTemplate = restTemplate;
     }
 
     @PostConstruct
     void init() {
-        String endpoint = buildEndpoint();
-        log.info("[RealAzureAI] Initialising ChatCompletionsClient → {}", endpoint);
+        String endpoint = resolveEndpoint();
+        log.info("[RealAzureAI] Initialising OpenAIClient via AIProjectClientBuilder → {}", endpoint);
+
+        OpenAIClientBuilder builder = new OpenAIClientBuilder().endpoint(endpoint);
 
         if (config.getApiKey() != null && !config.getApiKey().isBlank()) {
             log.info("[RealAzureAI] Authenticating with AzureKeyCredential");
-            this.chatClient = new ChatCompletionsClientBuilder()
-                .credential(new AzureKeyCredential(config.getApiKey()))
-                .endpoint(endpoint)
-                .buildClient();
+            builder.credential(new AzureKeyCredential(config.getApiKey()));
         } else {
-            log.info("[RealAzureAI] Authenticating with DefaultAzureCredential");
-            TokenCredential credential = new DefaultAzureCredentialBuilder().build();
-            this.chatClient = new ChatCompletionsClientBuilder()
-                .credential(credential)
-                .endpoint(endpoint)
-                .buildClient();
+            log.info("[RealAzureAI] Authenticating with DefaultAzureCredential (Entra ID)");
+            builder.credential(new DefaultAzureCredentialBuilder().build());
         }
+
+        this.openAIClient = builder.buildClient();
     }
 
-    private String buildEndpoint() {
-        String base = config.getProjectEndpoint();
-        if (base == null || base.isBlank()) {
-            throw new IllegalStateException("AZURE_AI_PROJECT_ENDPOINT is required when claims.azure.ai.enabled=true");
+    /**
+     * Resolve the Foundry project endpoint.
+     * The project endpoint should be:
+     *   https://<resource>.services.ai.azure.com/api/projects/<project>
+     */
+    private String resolveEndpoint() {
+        String ep = config.getProjectEndpoint();
+        if (ep == null || ep.isBlank()) {
+            throw new IllegalStateException(
+                "Azure AI Foundry project endpoint is required. " +
+                "Set claims.azure.ai.project-endpoint to " +
+                "https://<resource>.services.ai.azure.com/api/projects/<project>");
         }
-        if (!base.endsWith("/")) base += "/";
-        return base + config.getApiPath() + "/" + config.getModelDeployment();
+        return ep.endsWith("/") ? ep.substring(0, ep.length() - 1) : ep;
     }
 
-    // ─── AIClient implementation ───────────────────────────────────────────────
+    // ─── AIClient implementation ───────────────────────────────────────────
 
     @Override
     public ExtractedClaimData extractClaimData(String rawText) {
@@ -153,7 +158,7 @@ public class RealAzureAIClient implements AIClient {
             "You are an entity matching specialist for marine insurance. " +
             "Match the given entity names against known companies, vessels, and parties. " +
             "Return ONLY a JSON array of matches. Each entry: " +
-            "{ extractedName, matchedName, matchType (COMPANY|VESSEL|PERSON), confidence (0-1) }. " +
+            "{ extractedName, matchedName, matchType (COMPANY|VESSEL|PERSON), confidence (0-1)}. " +
             "Be conservative — only match if confidence > 0.7. " +
             "Return an empty array if no confident matches.";
 
@@ -199,7 +204,6 @@ public class RealAzureAIClient implements AIClient {
         boolean narrativeMismatch = false;
         StringBuilder summary = new StringBuilder();
 
-        // Call Azure Computer Vision REST API for image metadata analysis
         for (String imageUrl : imageUrls) {
             try {
                 VisionAnalysisResult vr = analyzeImageViaRest(imageUrl);
@@ -213,15 +217,13 @@ public class RealAzureAIClient implements AIClient {
             }
         }
 
-        // Use GPT-4o via chat completions to assess narrative consistency
         try {
             String narrativeCheck =
                 "You are an insurance image forensics specialist. " +
-                "Assess whether the following image URL content is consistent with a marine hull damage claim. " +
+                "Assess whether the image at the URL is consistent with a marine hull damage claim. " +
                 "Does the image show damage consistent with the incident? Respond with YES or NO and a brief reason.";
 
             for (String imageUrl : imageUrls) {
-                // Include image URL as content reference
                 String result = chatWithImage(narrativeCheck, imageUrl);
                 if (result != null && result.toLowerCase().contains("no")) {
                     narrativeMismatch = true;
@@ -261,15 +263,13 @@ public class RealAzureAIClient implements AIClient {
     @Override
     public List<ClaimSimilarityResult> findSimilarClaims(String queryText, int limit) {
         // Semantic search is handled by SemanticSearchService which uses Azure AI Search
-        // This method is a no-op here — RealAzureAIClient focuses on LLM inference
         return List.of();
     }
 
-    // ─── Private helpers ───────────────────────────────────────────────────────
+    // ─── Private helpers ─────────────────────────────────────────────────────
 
     /**
-     * Send a chat request to Azure AI Foundry GPT-4o.
-     * Returns the raw response content string.
+     * Send a chat request to Azure AI Foundry GPT-4o via Chat Completions API.
      */
     private String chat(String systemPrompt, String userMessage) {
         List<ChatRequestMessage> messages = new ArrayList<>();
@@ -279,18 +279,19 @@ public class RealAzureAIClient implements AIClient {
         ChatCompletionsOptions options = new ChatCompletionsOptions(messages);
         options.setMaxTokens(500);
         options.setTemperature(0.1);
-        options.setModel(config.getModelDeployment());
 
-        ChatCompletions response = chatClient.complete(options);
+        ChatCompletions response = openAIClient.getChatCompletions(
+            config.getModelDeployment(),
+            options
+        );
 
-        String content = response.getChoice().getMessage().getContent();
+        String content = response.getChoices().get(0).getMessage().getContent();
         log.debug("[RealAzureAI] chat response: {}", content);
         return content;
     }
 
     /**
      * Send a chat request with an image URL reference (GPT-4o vision).
-     * Uses multi-part content message.
      */
     private String chatWithImage(String systemPrompt, String imageUrl) {
         List<ChatRequestMessage> messages = new ArrayList<>();
@@ -300,15 +301,16 @@ public class RealAzureAIClient implements AIClient {
         ChatCompletionsOptions options = new ChatCompletionsOptions(messages);
         options.setMaxTokens(300);
         options.setTemperature(0.1);
-        options.setModel(config.getModelDeployment());
 
-        ChatCompletions response = chatClient.complete(options);
-        return response.getChoice().getMessage().getContent();
+        ChatCompletions response = openAIClient.getChatCompletions(
+            config.getModelDeployment(),
+            options
+        );
+        return response.getChoices().get(0).getMessage().getContent();
     }
 
     /**
-     * Analyse a single image via Azure Computer Vision REST API (if endpoint is configured).
-     * Falls back gracefully if not configured or call fails.
+     * Analyse a single image via Azure Computer Vision REST API (if configured).
      */
     private VisionAnalysisResult analyzeImageViaRest(String imageUrl) {
         if (config.getVisionEndpoint() == null || config.getVisionEndpoint().isBlank()
@@ -331,12 +333,8 @@ public class RealAzureAIClient implements AIClient {
             );
 
             var entity = new org.springframework.http.HttpEntity<>(body, headers);
-            var response = restTemplate.exchange(
-                visionUrl,
-                org.springframework.http.HttpMethod.POST,
-                entity,
-                Map.class
-            );
+            var response = new org.springframework.web.client.RestTemplate()
+                .exchange(visionUrl, org.springframework.http.HttpMethod.POST, entity, Map.class);
 
             if (response.getBody() == null) return null;
 
@@ -345,7 +343,6 @@ public class RealAzureAIClient implements AIClient {
             double manipulationScore = 0.0;
             boolean deepfake = false;
 
-            // Check imageType for manipulation signals
             if (result.get("imageType") != null) {
                 Map<?, ?> imageType = (Map<?, ?>) result.get("imageType");
                 Object clipArtObj = imageType.get("clipArtType");
@@ -357,7 +354,6 @@ public class RealAzureAIClient implements AIClient {
                 }
             }
 
-            // Check metadata for EXIF anomalies
             if (result.get("metadata") != null) {
                 Map<?, ?> metadata = (Map<?, ?>) result.get("metadata");
                 if (metadata.get("dateTime") == null) {
@@ -379,7 +375,6 @@ public class RealAzureAIClient implements AIClient {
         return (f != null && !f.isNull()) ? f.asText() : null;
     }
 
-    // Lightweight result record for vision analysis
     private record VisionAnalysisResult(
         List<String> flaggedRegions,
         double manipulationScore,

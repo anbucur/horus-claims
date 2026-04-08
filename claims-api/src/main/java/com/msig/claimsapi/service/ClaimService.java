@@ -1,6 +1,7 @@
 package com.msig.claimsapi.service;
 
 import com.msig.claimsapi.repository.ClaimRepository;
+import com.msig.claimsapi.service.audit.ClaimAuditService;
 import com.msig.claimsdomain.entities.Claim;
 import com.msig.claimsdomain.entities.Claim.WorkflowStatus;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import java.util.Optional;
 public class ClaimService {
 
     private final ClaimRepository claimRepository;
+    private final ClaimAuditService auditService;
 
     @Transactional(readOnly = true)
     public List<Claim> findAll() {
@@ -59,8 +61,11 @@ public class ClaimService {
     public Claim updateWorkflowStatus(Long claimId, WorkflowStatus newStatus) {
         Claim claim = claimRepository.findById(claimId)
                 .orElseThrow(() -> new IllegalArgumentException("Claim not found: " + claimId));
+        WorkflowStatus fromStatus = claim.getWorkflowStatus();
         claim.setWorkflowStatus(newStatus);
-        return claimRepository.save(claim);
+        Claim saved = claimRepository.save(claim);
+        auditService.logStatusChange(saved, fromStatus, newStatus, null, null);
+        return saved;
     }
 
     @Transactional

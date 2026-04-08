@@ -39,4 +39,12 @@ public class KafkaTopicConfig {
                 .replicas(1)
                 .build();
     }
+
+    @Bean
+    public NewTopic claimsSettledTopic() {
+        return TopicBuilder.name("claims-settled")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
 }

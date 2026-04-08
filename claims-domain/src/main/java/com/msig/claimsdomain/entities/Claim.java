@@ -6,6 +6,7 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -47,6 +48,17 @@ public class Claim {
     @Column(nullable = false)
     private WorkflowStatus workflowStatus;
 
+    @Column(precision = 19, scale = 2)
+    private BigDecimal settlementAmount;
+
+    @Column(length = 3)
+    private String settlementCurrency;
+
+    private LocalDateTime settledAt;
+
+    @Column(columnDefinition = "TEXT")
+    private String rejectionReason;
+
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -71,7 +83,15 @@ public class Claim {
     @Builder.Default
     private List<ClaimParty> claimParties = new ArrayList<>();
 
+    @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @Builder.Default
+    private List<ClaimReview> claimReviews = new ArrayList<>();
+
+    @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @Builder.Default
+    private List<ClaimStatusHistory> statusHistory = new ArrayList<>();
+
     public enum WorkflowStatus {
-        RECEIVED, EXTRACTING, VERIFYING, HITL, STP, COMPLETED
+        RECEIVED, EXTRACTING, VERIFYING, HITL, STP, APPROVED, REJECTED, COMPLETED
     }
 }

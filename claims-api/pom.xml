@@ -73,7 +73,21 @@
         </dependency>
         <dependency>
             <groupId>com.azure</groupId>
-            <artifactId>azure-ai-inference</artifactId>
+            <artifactId>azure-ai-documentintelligence</artifactId>
+            <version>1.0.7</version>
+        </dependency>
+        <!-- Azure AI Foundry (Foundry SDK) — replaces azure-ai-inference -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-ai-projects</artifactId>
+            <version>2.0.0-beta.3</version>
+        </dependency>
+        <!-- azure-ai-openai provides OpenAIClient (Chat Completions + Responses API)
+             and is transitively available through azure-ai-projects -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-ai-openai</artifactId>
+            <version>1.0.0-beta.16</version>
         </dependency>
         <dependency>
             <groupId>com.azure</groupId>

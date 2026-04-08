@@ -1,23 +1,23 @@
 package com.msig.claimsdomain.entities;
 
+import com.msig.claimsdomain.model.ClaimReviewAction;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Entity
-@Table(name = "evidence", indexes = {
-    @Index(name = "idx_evidence_claim_id", columnList = "claim_id")
+@Table(name = "claim_review", indexes = {
+    @Index(name = "idx_claim_review_claim_id", columnList = "claim_id")
 })
 @EntityListeners(AuditingEntityListener.class)
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Evidence {
+public class ClaimReview {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -29,37 +29,14 @@ public class Evidence {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private DocumentType documentType;
-
-    @Column
-    private String fileName;
-
-    @Column
-    private String fileUrl;
+    private ClaimReviewAction action;
 
     @Column(columnDefinition = "TEXT")
-    private String aiClassificationTags;
+    private String reviewerNotes;
 
-    @Column(columnDefinition = "TEXT")
-    private String aiExtractedText;
-
-    @Column(columnDefinition = "TEXT")
-    private String aiExtractionSchema;
-
-    @Column
-    private Double aiExtractionConfidenceScore;
-
-    @Column
-    private Double forensicsScore;
-
-    @Column(nullable = false)
-    private Boolean isQuarantined;
+    private String reviewer;
 
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
-
-    public enum DocumentType {
-        SURVEY_REPORT, IMAGE, EMAIL, INVOICE
-    }
 }

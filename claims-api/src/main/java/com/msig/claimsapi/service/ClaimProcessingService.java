@@ -7,6 +7,7 @@ import com.msig.claimsapi.event.ClaimStepCompletedEvent;
 import com.msig.claimsapi.repository.ClaimRepository;
 import com.msig.claimsapi.service.ai.AIOrchestrationService;
 import com.msig.claimsapi.service.ai.TextSimilarityDuplicateDetector;
+import com.msig.claimsapi.service.audit.ClaimAuditService;
 import com.msig.claimsapi.service.workflow.ClaimWorkflowStateMachine;
 import com.msig.claimsdomain.entities.Claim;
 import com.msig.claimsdomain.entities.Evidence;
@@ -34,6 +35,7 @@ public class ClaimProcessingService {
     private final ClaimWorkflowStateMachine stateMachine;
     private final ProcessingConfig processingConfig;
     private final ApplicationEventPublisher eventPublisher;
+    private final ClaimAuditService auditService;
     
     @Transactional
     public ProcessingResult<Claim> processClaim(Long claimId, ProcessingMode mode) {
@@ -63,8 +65,11 @@ public class ClaimProcessingService {
             
         } catch (Exception e) {
             log.error("Error processing claim {}: {}", claimId, e.getMessage(), e);
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.HITL);
             claimRepository.save(claim);
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.HITL, "SYSTEM",
+                    "Processing failed: " + e.getMessage());
             return ProcessingResult.<Claim>builder()
                     .data(claim)
                     .mode(effectiveMode)
@@ -81,8 +86,11 @@ public class ClaimProcessingService {
         
         if (mode == ProcessingMode.FULL_MANUAL) {
             log.info("FULL_MANUAL mode: skipping AI extraction, routing to manual extraction");
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.EXTRACTING);
             claimRepository.save(claim);
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.EXTRACTING, "SYSTEM",
+                    "FULL_MANUAL mode: AI extraction skipped");
             return ProcessingResult.empty(mode);
         }
         
@@ -95,15 +103,21 @@ public class ClaimProcessingService {
         ProcessingResult<ExtractedClaimData> result = aiOrchestrationService.extractClaimData(fnolDocument);
         
         if (result.isAiAvailable() && result.getData() != null) {
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.VERIFYING);
             claim.setAiConfidenceScore(result.getData().getConfidenceScore());
             claimRepository.save(claim);
-            
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.VERIFYING,
+                    "SYSTEM", "AI extraction successful");
+
             emitStepCompletedEvent(claim, "EXTRACTING", result, traceId);
         } else {
             log.warn("AI extraction returned no data for claim {}, routing to HITL", claim.getId());
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.HITL);
             claimRepository.save(claim);
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.HITL,
+                    "SYSTEM", "AI extraction unavailable");
             emitRoutedToHITLEvent(claim, "AI extraction unavailable", traceId);
         }
         
@@ -135,13 +149,16 @@ public class ClaimProcessingService {
         }
         
         ProcessingResult<PolicyVerificationResult> result = aiOrchestrationService.verifyPolicy(claim, policy);
-        
+
         if (result.isAiAvailable() && result.getData() != null) {
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.VERIFYING);
             claimRepository.save(claim);
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.VERIFYING,
+                    "SYSTEM", "Policy verification successful");
             emitStepCompletedEvent(claim, "VERIFYING", result, traceId);
         }
-        
+
         return result;
     }
     
@@ -241,8 +258,11 @@ public class ClaimProcessingService {
         }
         
         if (stateMachine.requiresHumanReview(claim, mode, confidenceScore)) {
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.HITL);
             claimRepository.save(claim);
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.HITL,
+                    "SYSTEM", "Below confidence threshold");
             emitRoutedToHITLEvent(claim, "Below confidence threshold", traceId);
             return ProcessingResult.<Claim>builder()
                     .data(claim)
@@ -252,10 +272,13 @@ public class ClaimProcessingService {
                     .traceId(traceId)
                     .build();
         }
-        
+
         if (confidenceScore >= processingConfig.getStpConfidenceThreshold()) {
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.STP);
             claimRepository.save(claim);
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.STP,
+                    "SYSTEM", "STP approved: confidence above threshold");
             emitApprovedSTPCEvent(claim, traceId);
             return ProcessingResult.<Claim>builder()
                     .data(claim)
@@ -264,9 +287,12 @@ public class ClaimProcessingService {
                     .traceId(traceId)
                     .build();
         }
-        
+
+        Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
         claim.setWorkflowStatus(Claim.WorkflowStatus.HITL);
         claimRepository.save(claim);
+        auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.HITL,
+                "SYSTEM", "Confidence between thresholds");
         emitRoutedToHITLEvent(claim, "Confidence between thresholds", traceId);
         return ProcessingResult.<Claim>builder()
                 .data(claim)

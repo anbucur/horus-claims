@@ -90,7 +90,9 @@ claims:
       api-key: ${AZURE_AI_API_KEY:}
       model-deployment: ${AZURE_OPENAI_DEPLOYMENT:gpt-4o}
       api-version: ${AZURE_OPENAI_API_VERSION:2024-06-01}
-      api-path: ${AZURE_OPENAI_API_PATH:deployments}
+      # api-version and api-path are deprecated — the Foundry SDK uses a single project-endpoint.
+      # Old format (azure-ai-inference): https://<resource>.services.azureml.ms/deployments/<model>
+      # New format (Foundry SDK):   https://<resource>.services.ai.azure.com/api/projects/<project>
       vision:
         endpoint: ${AZURE_VISION_ENDPOINT:}
         api-key: ${AZURE_VISION_API_KEY:}
@@ -101,3 +103,8 @@ claims:
         index: ${AZURE_SEARCH_INDEX:claims}
       max-retries: 3
       timeout-seconds: 30
+  document-intelligence:
+    enabled: false
+    endpoint: ${DOCUMENT_INTELLIGENCE_ENDPOINT:}
+    api-key: ${DOCUMENT_INTELLIGENCE_API_KEY:}
+    model-id: ${DOCUMENT_INTELLIGENCE_MODEL_ID:prebuilt-layout}

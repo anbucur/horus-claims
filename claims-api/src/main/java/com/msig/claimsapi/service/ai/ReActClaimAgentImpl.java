@@ -1,13 +1,12 @@
 package com.msig.claimsapi.service.ai;
 
-import com.azure.ai.inference.ChatCompletionsClient;
-import com.azure.ai.inference.ChatCompletionsClientBuilder;
-import com.azure.ai.inference.models.ChatCompletionsOptions;
-import com.azure.ai.inference.models.ChatCompletions;
-import com.azure.ai.inference.models.ChatRequestMessage;
-import com.azure.ai.inference.models.ChatRequestUserMessage;
+import com.azure.ai.openai.OpenAIClient;
+import com.azure.ai.openai.OpenAIClientBuilder;
+import com.azure.ai.openai.models.ChatCompletions;
+import com.azure.ai.openai.models.ChatCompletionsOptions;
+import com.azure.ai.openai.models.ChatRequestMessage;
+import com.azure.ai.openai.models.ChatRequestUserMessage;
 import com.azure.core.credential.AzureKeyCredential;
-import com.azure.core.credential.TokenCredential;
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.msig.claimsapi.config.AzureAIConfig;
@@ -23,6 +22,7 @@ import java.util.*;
 
 /**
  * ReAct-style claim routing agent backed by Azure AI Foundry GPT-4o.
+ * Uses azure-ai-projects (OpenAIClient via AIProjectClientBuilder).
  * Activates only when claims.azure.ai.enabled=true.
  */
 @Service
@@ -33,31 +33,35 @@ public class ReActClaimAgentImpl implements ReActClaimAgent {
 
     private final AzureAIConfig config;
     private final ObjectMapper objectMapper;
-    private ChatCompletionsClient chatClient;
+    private OpenAIClient openAIClient;
 
     @PostConstruct
     void init() {
-        String base = config.getProjectEndpoint();
-        if (base == null || base.isBlank()) {
-            throw new IllegalStateException("AZURE_AI_PROJECT_ENDPOINT is required when claims.azure.ai.enabled=true");
-        }
-        if (!base.endsWith("/")) base += "/";
-        String endpoint = base + config.getApiPath() + "/" + config.getModelDeployment();
+        String endpoint = resolveEndpoint();
+        log.info("[ReActAgent] Initialising OpenAIClient via AIProjectClientBuilder → {}", endpoint);
 
-        log.info("[ReActAgent] Connecting to Azure AI Foundry → {}", endpoint);
+        OpenAIClientBuilder builder = new OpenAIClientBuilder().endpoint(endpoint);
 
         if (config.getApiKey() != null && !config.getApiKey().isBlank()) {
-            this.chatClient = new ChatCompletionsClientBuilder()
-                .credential(new AzureKeyCredential(config.getApiKey()))
-                .endpoint(endpoint)
-                .buildClient();
+            log.info("[ReActAgent] Authenticating with AzureKeyCredential");
+            builder.credential(new AzureKeyCredential(config.getApiKey()));
         } else {
-            TokenCredential credential = new DefaultAzureCredentialBuilder().build();
-            this.chatClient = new ChatCompletionsClientBuilder()
-                .credential(credential)
-                .endpoint(endpoint)
-                .buildClient();
+            log.info("[ReActAgent] Authenticating with DefaultAzureCredential (Entra ID)");
+            builder.credential(new DefaultAzureCredentialBuilder().build());
         }
+
+        this.openAIClient = builder.buildClient();
+    }
+
+    private String resolveEndpoint() {
+        String ep = config.getProjectEndpoint();
+        if (ep == null || ep.isBlank()) {
+            throw new IllegalStateException(
+                "Azure AI Foundry project endpoint is required. " +
+                "Set claims.azure.ai.project-endpoint to " +
+                "https://<resource>.services.ai.azure.com/api/projects/<project>");
+        }
+        return ep.endsWith("/") ? ep.substring(0, ep.length() - 1) : ep;
     }
 
     @Override
@@ -160,11 +164,13 @@ public class ReActClaimAgentImpl implements ReActClaimAgent {
         ChatCompletionsOptions options = new ChatCompletionsOptions(messages);
         options.setMaxTokens(600);
         options.setTemperature(0.1);
-        options.setModel(config.getModelDeployment());
 
-        ChatCompletions response = chatClient.complete(options);
+        ChatCompletions response = openAIClient.getChatCompletions(
+            config.getModelDeployment(),
+            options
+        );
 
-        String content = response.getChoice().getMessage().getContent();
+        String content = response.getChoices().get(0).getMessage().getContent();
         log.debug("[ReActAgent] raw response: {}", content);
         return content;
     }

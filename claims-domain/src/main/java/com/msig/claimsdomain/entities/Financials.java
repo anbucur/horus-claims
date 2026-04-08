@@ -43,6 +43,12 @@ public class Financials {
     @Column(nullable = false)
     private LocalDate transactionDate;
 
+    private String approvedBy;
+
+    private LocalDateTime approvedAt;
+
+    private LocalDateTime paidAt;
+
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
