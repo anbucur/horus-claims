@@ -1,5 +1,6 @@
 package com.msig.claimsapi.service.ai;
 
+import com.msig.claimsdomain.model.ClaimSimilarityResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -56,5 +57,11 @@ public class MockAIClient implements AIClient {
     @Override
     public String getModelName() {
         return "mock-ai-stub";
+    }
+
+    @Override
+    public List<ClaimSimilarityResult> findSimilarClaims(String queryText, int limit) {
+        log.info("[MOCK AI] findSimilarClaims called — AI unavailable, returning empty list");
+        return List.of();
     }
 }

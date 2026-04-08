@@ -83,3 +83,21 @@ claims:
     circuit-breaker:
       failure-threshold: 3
       reset-minutes: 2
+  azure:
+    ai:
+      enabled: false
+      openai:
+        endpoint: ${AZURE_OPENAI_ENDPOINT:}
+        api-key: ${AZURE_OPENAI_API_KEY:}
+        deployment: gpt-4o
+        api-version: "2024-06-01"
+      vision:
+        endpoint: ${AZURE_VISION_ENDPOINT:}
+        api-key: ${AZURE_VISION_API_KEY:}
+        api-version: "2024-05-01-preview"
+      search:
+        endpoint: ${AZURE_SEARCH_ENDPOINT:}
+        api-key: ${AZURE_SEARCH_API_KEY:}
+        index: claims
+      max-retries: 3
+      timeout-seconds: 30

@@ -1,5 +1,7 @@
 package com.msig.claimsapi.service.ai;
 
+import com.msig.claimsdomain.model.ClaimSimilarityResult;
+
 import java.util.List;
 
 /**
@@ -37,6 +39,11 @@ public interface AIClient {
      * Returns the model name being used (e.g. "gpt-4o", "mock-ai-stub").
      */
     String getModelName();
+
+    /**
+     * Semantic search for similar claims using Azure AI Search or keyword fallback.
+     */
+    List<ClaimSimilarityResult> findSimilarClaims(String queryText, int limit);
 
     // ─── Shared response records ───────────────────────────────────────────────
 

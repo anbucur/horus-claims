@@ -18,7 +18,11 @@ public interface AIOrchestrationService {
     ProcessingResult<ForensicsResult> runForensics(List<Evidence> evidence);
     
     ProcessingResult<List<DuplicateMatch>> detectDuplicates(Claim claim);
-    
+
+    ProcessingResult<List<ClaimSimilarityResult>> findSimilarClaims(Claim claim);
+
+    ClaimRecommendation recommendRouting(Claim claim, ClaimContext context);
+
     boolean isAIAvailable();
     
     void recordSuccess();

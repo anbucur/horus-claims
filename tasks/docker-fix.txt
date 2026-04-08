@@ -1,0 +1,63 @@
+Fix the Docker build for the horus-claims project at C:\Users\Alex\Documents\GitHub\horus-claims
+
+## PROBLEM
+Docker Compose is failing because:
+1. The frontend Dockerfile uses "npm ci" but there's no package-lock.json
+2. The claims-api Dockerfile JAR glob "*.jar" doesn't match on Windows
+3. The frontend build context is wrong (it's set to "." instead of "./claims-frontend")
+
+## FIXES NEEDED
+
+### 1. Fix claims-api/Dockerfile
+The JAR filename is "claims-api-1.0.0-SNAPSHOT.jar". Change from:
+  COPY --from=builder /app/claims-api/target/*.jar app.jar
+To:
+  COPY --from=builder /app/claims-api/target/claims-api-1.0.0-SNAPSHOT.jar app.jar
+
+Also change the Maven build to NOT skip tests for the initial build (just -DskipTests is fine for the docker build):
+  RUN mvn package -pl claims-domain,claims-api -DskipTests
+
+### 2. Fix claims-frontend/Dockerfile
+- Change "npm ci" to "npm install" (no lockfile)
+- The WORKDIR is /app, so package.json COPY should work
+
+### 3. Fix docker-compose.yml
+The frontend build context should be "./claims-frontend" not ".":
+  frontend:
+    build:
+      context: ./claims-frontend
+      dockerfile: Dockerfile
+
+Also add a healthcheck to the api service that uses wget instead of curl:
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+
+### 4. Make sure application-docker.yml exists
+Check if claims-api/src/main/resources/application-docker.yml exists. If not, create it with:
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/claims
+    username: claims_user
+    password: ${DB_PASSWORD:claims_secure_pass}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+```
+
+### 5. After fixing, build and start:
+1. docker compose -f C:\Users\Alex\Documents\GitHub\horus-claims\docker-compose.yml down
+2. docker compose -f C:\Users\Alex\Documents\GitHub\horus-claims\docker-compose.yml up -d --build
+3. Wait 60 seconds
+4. Check: docker ps (should show claims-postgres, claims-api, claims-frontend, claims-nginx)
+5. Check API: curl http://localhost:8080/actuator/health (should return {"status":"UP"})
+6. Check frontend: curl http://localhost:8082 (should return HTML)
+
+Commit all Dockerfile and docker-compose changes with message: "fix(docker): build context, JAR path, npm install"
+
+When done, run this to notify:
+openclaw system event --text "Docker build complete — check docker ps" --mode now

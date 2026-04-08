@@ -1,0 +1,535 @@
+You are implementing Phase 4 of the MSIG Specialty Marine Cognitive Claims Processing Platform (horus-claims).
+
+Project root: C:\Users\Alex\Documents\GitHub\horus-claims
+
+## What exists
+- Java Spring Boot 4.0.5 + React 18 monorepo (Maven multi-module)
+- Module: claims-api (Spring Boot REST API)
+- Module: claims-domain (JPA entities + domain model)
+- Module: claims-frontend (React SPA)
+- claims-docker (Docker Compose)
+
+## AI Layer (current state)
+- `AIClient` interface: extractClaimData, verifyPolicy, matchEntities, runForensics, isAvailable, getModelName
+- `MockAIClient` implementation: all stub methods returning empty/null responses, isAvailable=false
+- `DefaultAIOrchestrationService`: calls AI client methods, wraps in ProcessingResult, uses AICircuitBreaker
+- `TextSimilarityDuplicateDetector`: local TF-IDF cosine similarity (no AI needed), works well
+- `AICircuitBreaker`: 3 failures trips to OPEN, 2min reset, half-open auto-recovery
+
+## Domain model records (in claims-domain)
+- ExtractedClaimData, PolicyVerificationResult, EntityMatchResult, ForensicsResult, DuplicateMatch, ExtractedEntities, FNOLDocument, ProcessingResult<T>, ProcessingMode (enum: FULL_MANUAL, SEMI_AUTOMATIC, AI_ASSISTED, AUTO)
+
+## Application config (application.yml)
+claims.processing.default-mode: AI_ASSISTED
+claims.processing.stp-confidence-threshold: 85
+claims.processing.hitl-confidence-threshold: 60
+claims.processing.ai-enabled: true
+
+## Your task: Build Phase 4 — Real AI Pipeline
+
+### 1. Azure AI Config
+Create: claims-api/src/main/java/com/msig/claimsapi/config/AzureAIConfig.java
+```java
+package com.msig.claimsapi.config;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+@ConfigurationProperties(prefix = "claims.azure.ai")
+@Data
+public class AzureAIConfig {
+    private boolean enabled = false;
+    private String openAiEndpoint;
+    private String openAiApiKey;
+    private String openAiDeployment = "gpt-4o";
+    private String openAiApiVersion = "2024-06-01";
+    private String visionEndpoint;
+    private String visionApiKey;
+    private String visionApiVersion = "2024-05-01-preview";
+    private String searchEndpoint;
+    private String searchApiKey;
+    private String searchIndex = "claims";
+    private int maxRetries = 3;
+    private int timeoutSeconds = 30;
+}
+```
+
+### 2. RealAzureAIClient
+Create: claims-api/src/main/java/com/msig/claimsapi/service/ai/RealAzureAIClient.java
+
+IMPORTANT: Add @ConditionalOnProperty(name = "claims.azure.ai.enabled", havingValue = "true") so it only activates when enabled=true.
+
+Constructor: Inject AzureAIConfig, RestTemplate, ObjectMapper.
+
+Implementation:
+
+**extractClaimData(String rawText)**:
+- POST to {openAiEndpoint}/openai/deployments/{openAiDeployment}/chat/completions?api-version={openAiApiVersion}
+- Header: Authorization: Bearer {openAiApiKey} (Azure uses api-key header)
+- System prompt: "You are an insurance claims data extraction specialist. Extract structured claim data from FNOL text. Return ONLY a JSON object with: dateOfLoss, incidentNarrative, lossLocation, estimatedValue (string), currency, confidenceScore (0-1). If uncertain, return null for uncertain fields."
+- User prompt: the rawText
+- Parse response JSON into ExtractedClaimData record
+- Return with aiAvailable=true, aiModelUsed=openAiDeployment
+
+**verifyPolicy(String policyNumber, String dateOfLoss)**:
+- POST to same Azure OpenAI endpoint
+- System prompt: "You are a marine insurance policy verification specialist. Given a policy number and date of loss, verify if the policy is active, coverage is valid, deductible is satisfied, and line of business matches. Return JSON: policyId, policyNumber, status, lineOfBusiness, coverageDetails, deductible, inPeriod (boolean). Use null for fields you cannot verify."
+- Return PolicyVerificationResult with aiAvailable=true
+
+**matchEntities(List<String> entityNames)**:
+- POST to Azure OpenAI
+- System prompt: "You are an entity matching specialist for marine insurance. Match the given entity names against known companies, vessels, and parties. Return a JSON array of matches: extractedName, matchedName, matchType (COMPANY|VESSEL|PERSON), confidence (0-1). Be conservative — only match if confidence > 0.7."
+- Parse into List<EntityMatch>
+
+**runForensics(List<String> imageUrls)**:
+- For each URL: call Azure AI Vision analyze endpoint
+- POST to {visionEndpoint}/vision/computeHistory/analyze?api-version={visionApiVersion}
+- Headers: Ocp-Apim-Subscription-Key: {visionApiKey}
+- Body: { "url": imageUrl } with features: ["imageType", "faces", "objects", "ocr", "metadata"]
+- Also use GPT-4o vision to assess damage consistency with claim narrative
+- Combine into ForensicsResult:
+  - flaggedRegions: regions with anomalies detected
+  - manipulationScore: based on metadata consistency
+  - deepfakeDetected: from imageType analysis
+  - narrativeMismatch: GPT-4o compares image vs narrative
+  - summary: human-readable findings
+  - aiAvailable=true, processed=true
+- Return with processed=false if calls fail
+
+**findSimilarClaims(String queryText, int limit)**:
+- POST to Azure AI Search: {searchEndpoint}/indexes/{searchIndex}/docs/search?api-version=2024-06-01
+- Body: { "searchText": queryText, "top": limit }
+- Return List<ClaimSimilarityResult>
+
+**isAvailable()**: return enabled flag (from config)
+
+**getModelName()**: return openAiDeployment
+
+Handle exceptions gracefully — return empty/negative results rather than throwing.
+
+### 3. ClaimSimilarityResult
+Create in claims-domain/src/main/java/com/msig/claimsdomain/model/ClaimSimilarityResult.java:
+```java
+package com.msig.claimsdomain.model;
+
+public record ClaimSimilarityResult(
+    Long claimId,
+    String claimReference,
+    String incidentNarrative,
+    double similarityScore,
+    String matchReason
+) {}
+```
+
+### 4. SemanticSearchService
+Create: claims-api/src/main/java/com/msig/claimsapi/service/SemanticSearchService.java
+```java
+package com.msig.claimsapi.service;
+
+import com.msig.claimsapi.config.AzureAIConfig;
+import com.msig.claimsapi.repository.ClaimRepository;
+import com.msig.claimsdomain.entities.Claim;
+import com.msig.claimsdomain.model.ClaimSimilarityResult;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class SemanticSearchService {
+
+    private final ClaimRepository claimRepository;
+    private final AzureAIConfig azureAIConfig;
+    private final RestTemplate restTemplate;
+
+    public List<ClaimSimilarityResult> findSimilarClaims(Claim claim, int limit) {
+        String queryText = buildQueryText(claim);
+
+        if (isAzureSearchConfigured()) {
+            return searchWithAzureAI(queryText, claim.getId(), limit);
+        }
+
+        return searchWithKeywords(queryText, claim.getId(), limit);
+    }
+
+    private String buildQueryText(Claim claim) {
+        StringBuilder sb = new StringBuilder();
+        if (claim.getIncidentNarrative() != null) sb.append(claim.getIncidentNarrative()).append(" ");
+        if (claim.getLossLocation() != null) sb.append(claim.getLossLocation()).append(" ");
+        if (claim.getClaimType() != null) sb.append(claim.getClaimType()).append(" ");
+        return sb.toString().trim();
+    }
+
+    private boolean isAzureSearchConfigured() {
+        return azureAIConfig.isEnabled()
+            && azureAIConfig.getSearchEndpoint() != null
+            && !azureAIConfig.getSearchEndpoint().isEmpty();
+    }
+
+    private List<ClaimSimilarityResult> searchWithAzureAI(String query, Long excludeClaimId, int limit) {
+        try {
+            String url = azureAIConfig.getSearchEndpoint()
+                + "/indexes/" + azureAIConfig.getSearchIndex()
+                + "/docs/search?api-version=2024-06-01";
+
+            var requestBody = new java.util.HashMap<String, Object>();
+            requestBody.put("searchText", query);
+            requestBody.put("top", limit);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("api-key", azureAIConfig.getSearchApiKey());
+
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+            var response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
+
+            List<ClaimSimilarityResult> results = new java.util.ArrayList<>();
+            if (response.getBody() != null && response.getBody().get("value") != null) {
+                List<Map<String, Object>> hits = (List<Map<String, Object>>) response.getBody().get("value");
+                for (Map<String, Object> hit : hits) {
+                    Double score = hit.get("@search.score") != null ? ((Number) hit.get("@search.score")).doubleValue() : 0.0;
+                    results.add(new ClaimSimilarityResult(
+                        ((Number) hit.get("claimId")).longValue(),
+                        (String) hit.get("claimReference"),
+                        (String) hit.get("incidentNarrative"),
+                        score,
+                        "Azure AI Search similarity"
+                    ));
+                }
+            }
+            return results;
+        } catch (Exception e) {
+            log.warn("Azure AI Search failed, falling back to keyword search: {}", e.getMessage());
+            return searchWithKeywords(query, excludeClaimId, limit);
+        }
+    }
+
+    private List<ClaimSimilarityResult> searchWithKeywords(String query, Long excludeClaimId, int limit) {
+        try {
+            List<Object[]> rows = claimRepository.findSimilarByText(query, excludeClaimId, limit);
+            List<ClaimSimilarityResult> results = new java.util.ArrayList<>();
+            for (Object[] row : rows) {
+                results.add(new ClaimSimilarityResult(
+                    ((Number) row[0]).longValue(),
+                    (String) row[1],
+                    (String) row[2],
+                    ((Number) row[3]).doubleValue(),
+                    "Keyword full-text match"
+                ));
+            }
+            return results;
+        } catch (Exception e) {
+            log.warn("Keyword search failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+}
+```
+
+Also add this method to ClaimRepository interface:
+```java
+@Query(value = "SELECT c.id, c.claim_reference, c.incident_narrative, " +
+    "ts_rank(to_tsvector('english', coalesce(c.incident_narrative,'') || ' ' || coalesce(c.loss_location,'')), " +
+    "plainto_tsquery('english', :query)) as rank " +
+    "FROM claims c " +
+    "WHERE c.id != :excludeClaimId " +
+    "ORDER BY rank DESC LIMIT :limit", nativeQuery = true)
+List<Object[]> findSimilarByText(@Param("query") String query, @Param("excludeClaimId") Long excludeClaimId, @Param("limit") int limit);
+```
+
+### 5. ReActClaimAgent
+Create: claims-api/src/main/java/com/msig/claimsapi/service/ai/ReActClaimAgent.java
+```java
+package com.msig.claimsapi.service.ai;
+
+import com.msig.claimsdomain.entities.Claim;
+import com.msig.claimsdomain.model.*;
+
+public interface ReActClaimAgent {
+    ClaimRecommendation recommend(Claim claim, ClaimContext context);
+}
+
+record ClaimRecommendation(
+    String decision,           // STP | HITL | SIU
+    String reasoning,
+    double confidence,
+    java.util.List<String> considerations,
+    String traceId
+) {}
+
+record ClaimContext(
+    ExtractedClaimData extractedData,
+    PolicyVerificationResult policyResult,
+    EntityMatchResult entityResult,
+    ForensicsResult forensicsResult,
+    java.util.List<DuplicateMatch> duplicates,
+    java.util.List<ClaimSimilarityResult> similarClaims
+) {}
+```
+
+Create implementation: claims-api/src/main/java/com/msig/claimsapi/service/ai/ReActClaimAgentImpl.java
+```java
+package com.msig.claimsapi.service.ai;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.msig.claimsapi.config.AzureAIConfig;
+import com.msig.claimsdomain.entities.Claim;
+import com.msig.claimsdomain.model.*;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.*;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.*;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+@ConditionalOnProperty(name = "claims.azure.ai.enabled", havingValue = "true")
+public class ReActClaimAgentImpl implements ReActClaimAgent {
+
+    private final AzureAIConfig config;
+    private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
+
+    @Override
+    public ClaimRecommendation recommend(Claim claim, ClaimContext context) {
+        String traceId = UUID.randomUUID().toString();
+        try {
+            String prompt = buildPrompt(claim, context);
+            String jsonResponse = callGPT4o(prompt);
+            return parseRecommendation(jsonResponse, traceId);
+        } catch (Exception e) {
+            log.error("ReAct agent failed for claim {}: {}", claim.getId(), e.getMessage());
+            return new ClaimRecommendation(
+                "HITL",
+                "AI unavailable, defaulting to human review: " + e.getMessage(),
+                0.0,
+                List.of("AI reasoning failed"),
+                traceId
+            );
+        }
+    }
+
+    private String buildPrompt(Claim claim, ClaimContext ctx) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are an expert marine insurance claims underwriter.\n");
+        sb.append("Analyze the following claim and recommend: STP (auto-approve), HITL (human review), or SIU (special investigations).\n\n");
+        sb.append("Claim ID: ").append(claim.getId()).append("\n");
+        sb.append("Claim Reference: ").append(claim.getClaimReference()).append("\n");
+        sb.append("Claim Type: ").append(claim.getClaimType()).append("\n");
+        sb.append("Loss Location: ").append(claim.getLossLocation()).append("\n");
+        sb.append("Incident Narrative: ").append(claim.getIncidentNarrative()).append("\n\n");
+
+        if (ctx.extractedData() != null) {
+            sb.append("AI Extracted Data:\n");
+            sb.append("- Date of Loss: ").append(ctx.extractedData().dateOfLoss()).append("\n");
+            sb.append("- Narrative: ").append(ctx.extractedData().incidentNarrative()).append("\n");
+            sb.append("- Estimated Loss: ").append(ctx.extractedData().estimatedValue()).append("\n");
+            sb.append("- Confidence: ").append(ctx.extractedData().confidenceScore()).append("\n\n");
+        }
+
+        if (ctx.policyResult() != null) {
+            sb.append("Policy Verification:\n");
+            sb.append("- Active: ").append(ctx.policyResult().isPolicyActive()).append("\n");
+            sb.append("- Coverage Valid: ").append(ctx.policyResult().isCoverageValid()).append("\n");
+            sb.append("- In Period: ").append(ctx.policyResult().isInPeriod()).append("\n\n");
+        }
+
+        if (ctx.forensicsResult() != null) {
+            sb.append("Image Forensics:\n");
+            sb.append("- Manipulation Score: ").append(ctx.forensicsResult().getManipulationScore()).append("\n");
+            sb.append("- Deepfake Detected: ").append(ctx.forensicsResult().isDeepfakeDetected()).append("\n");
+            sb.append("- Narrative Mismatch: ").append(ctx.forensicsResult().isNarrativeMismatch()).append("\n");
+            sb.append("- Summary: ").append(ctx.forensicsResult().getSummary()).append("\n\n");
+        }
+
+        if (ctx.duplicates() != null && !ctx.duplicates().isEmpty()) {
+            sb.append("Potential Duplicates Found: ").append(ctx.duplicates().size()).append("\n");
+        }
+
+        if (ctx.similarClaims() != null && !ctx.similarClaims().isEmpty()) {
+            sb.append("Similar Past Claims: ").append(ctx.similarClaims().size()).append("\n");
+        }
+
+        sb.append("\nReturn ONLY a JSON object with this exact structure:\n");
+        sb.append("{\"decision\": \"STP|HITL|SIU\", \"reasoning\": \"...\", \"confidence\": 0.0-1.0, \"considerations\": [\"...\", \"...\"]}\n");
+        sb.append("Be conservative. Only recommend STP if confidence > 0.90 and all checks pass.");
+        return sb.toString();
+    }
+
+    private String callGPT4o(String prompt) {
+        String url = config.getOpenAiEndpoint()
+            + "/openai/deployments/" + config.getOpenAiDeployment()
+            + "/chat/completions?api-version=" + config.getOpenAiApiVersion();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("api-key", config.getOpenAiApiKey());
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("model", config.getOpenAiDeployment());
+        body.put("messages", List.of(
+            Map.of("role", "user", "content", prompt)
+        ));
+        body.put("max_tokens", 500);
+        body.put("temperature", 0.1);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+        ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
+
+        Map<?, ?> responseBody = response.getBody();
+        if (responseBody == null) throw new RuntimeException("Empty response from Azure OpenAI");
+
+        List<Map<String, Object>> choices = (List<Map<String, Object>>) responseBody.get("choices");
+        if (choices == null || choices.isEmpty()) throw new RuntimeException("No choices in response");
+
+        Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
+        return (String) message.get("content");
+    }
+
+    private ClaimRecommendation parseRecommendation(String json, String traceId) {
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
+            String decision = (String) parsed.get("decision");
+            String reasoning = (String) parsed.get("reasoning");
+            double confidence = parsed.get("confidence") != null ? ((Number) parsed.get("confidence")).doubleValue() : 0.5;
+
+            List<String> considerations = new ArrayList<>();
+            if (parsed.get("considerations") != null) {
+                considerations = new ArrayList<>((List<String>) parsed.get("considerations"));
+            }
+
+            return new ClaimRecommendation(decision, reasoning, confidence, considerations, traceId);
+        } catch (Exception e) {
+            log.warn("Failed to parse ReAct response, defaulting to HITL: {}", e.getMessage());
+            return new ClaimRecommendation("HITL", "Parse error, defaulting to human review", 0.0, List.of(), traceId);
+        }
+    }
+}
+```
+
+### 6. Update AIClient interface
+Add to claims-api/src/main/java/com/msig/claimsapi/service/ai/AIClient.java:
+```java
+import com.msig.claimsdomain.model.ClaimSimilarityResult;
+// Add to interface:
+List<ClaimSimilarityResult> findSimilarClaims(String queryText, int limit);
+```
+
+### 7. Update MockAIClient
+Add to MockAIClient:
+```java
+import com.msig.claimsdomain.model.ClaimSimilarityResult;
+
+@Override
+public List<ClaimSimilarityResult> findSimilarClaims(String queryText, int limit) {
+    log.info("[MOCK AI] findSimilarClaims called — AI unavailable, returning empty list");
+    return List.of();
+}
+```
+
+### 8. RestConfig
+Create: claims-api/src/main/java/com/msig/claimsapi/config/RestConfig.java
+```java
+package com.msig.claimsapi.config;
+
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestTemplate;
+
+import java.time.Duration;
+
+@Configuration
+public class RestConfig {
+    @Bean
+    public RestTemplate restTemplate(RestTemplateBuilder builder) {
+        return builder
+            .setConnectTimeout(Duration.ofSeconds(30))
+            .setReadTimeout(Duration.ofSeconds(30))
+            .build();
+    }
+}
+```
+
+### 9. Update application.yml
+Add to claims-api/src/main/resources/application.yml under the existing claims: section:
+```yaml
+  azure:
+    ai:
+      enabled: false
+      openai:
+        endpoint: ${AZURE_OPENAI_ENDPOINT:}
+        api-key: ${AZURE_OPENAI_API_KEY:}
+        deployment: gpt-4o
+        api-version: "2024-06-01"
+      vision:
+        endpoint: ${AZURE_VISION_ENDPOINT:}
+        api-key: ${AZURE_VISION_API_KEY:}
+        api-version: "2024-05-01-preview"
+      search:
+        endpoint: ${AZURE_SEARCH_ENDPOINT:}
+        api-key: ${AZURE_SEARCH_API_KEY:}
+        index: claims
+      max-retries: 3
+      timeout-seconds: 30
+```
+
+### 10. Update DefaultAIOrchestrationService
+Inject SemanticSearchService:
+```java
+private final SemanticSearchService semanticSearchService;
+```
+
+Add method:
+```java
+@Override
+public ProcessingResult<List<ClaimSimilarityResult>> findSimilarClaims(Claim claim) {
+    if (circuitBreaker.isOpen()) {
+        return ProcessingResult.<List<ClaimSimilarityResult>>builder()
+            .data(List.of())
+            .mode(ProcessingMode.SEMI_AUTOMATIC)
+            .aiAvailable(false)
+            .build();
+    }
+    try {
+        List<ClaimSimilarityResult> results = semanticSearchService.findSimilarClaims(claim, 5);
+        circuitBreaker.recordSuccess();
+        return ProcessingResult.success(results, ProcessingMode.AI_ASSISTED, "azure-ai-search");
+    } catch (Exception e) {
+        circuitBreaker.recordFailure();
+        return ProcessingResult.<List<ClaimSimilarityResult>>builder()
+            .data(List.of())
+            .mode(ProcessingMode.SEMI_AUTOMATIC)
+            .aiAvailable(false)
+            .build();
+    }
+}
+```
+
+Also update the detectDuplicates method to incorporate semantic search results as additional signal.
+
+### 11. Verify compilation
+After all changes, run: cd claims-api && mvn compile -q
+
+Fix any compilation errors. Common issues:
+- Missing imports (add them)
+- Type mismatches (cast appropriately)
+- Repository method not matching implementation
+
+### 12. Git commit
+After successful compilation, commit with message:
+"feat(ai): Phase 4 — Real Azure AI pipeline with semantic search and ReAct agent"
+
+Use: git add -A && git commit -m "feat(ai): Phase 4 — Real Azure AI pipeline with semantic search and ReAct agent"
+
+When completely finished, notify via: openclaw system event --text "Phase 4 AI pipeline complete" --mode now

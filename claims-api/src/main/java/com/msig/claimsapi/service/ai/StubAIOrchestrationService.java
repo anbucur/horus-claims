@@ -53,6 +53,22 @@ public class StubAIOrchestrationService implements AIOrchestrationService {
     }
     
     @Override
+    public ProcessingResult<List<ClaimSimilarityResult>> findSimilarClaims(Claim claim) {
+        log.warn("AI semantic search is disabled. Returning empty result for claim: {}", claim.getId());
+        return ProcessingResult.<List<ClaimSimilarityResult>>builder()
+                .data(Collections.emptyList())
+                .mode(ProcessingMode.FULL_MANUAL)
+                .aiAvailable(false)
+                .build();
+    }
+
+    @Override
+    public ClaimRecommendation recommendRouting(Claim claim, ClaimContext context) {
+        log.warn("ReAct agent is disabled. Returning HITL for claim: {}", claim.getId());
+        return new ClaimRecommendation("HITL", "AI disabled, defaulting to human review", 0.0, List.of(), "n/a");
+    }
+
+    @Override
     public boolean isAIAvailable() {
         return false;
     }

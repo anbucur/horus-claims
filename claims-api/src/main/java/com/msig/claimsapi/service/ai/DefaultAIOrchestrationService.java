@@ -4,6 +4,7 @@ import com.msig.claimsdomain.entities.Claim;
 import com.msig.claimsdomain.entities.Evidence;
 import com.msig.claimsdomain.entities.Policy;
 import com.msig.claimsdomain.model.*;
+import com.msig.claimsapi.service.SemanticSearchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -19,8 +20,10 @@ import java.util.List;
 @RequiredArgsConstructor
 @Slf4j
 public class DefaultAIOrchestrationService implements AIOrchestrationService {
-    
+
     private final AICircuitBreaker circuitBreaker;
+    private final SemanticSearchService semanticSearchService;
+    private final ReActClaimAgent reactAgent;
     
     @Override
     public ProcessingResult<ExtractedClaimData> extractClaimData(FNOLDocument fnolDocument) {
@@ -157,7 +160,7 @@ public class DefaultAIOrchestrationService implements AIOrchestrationService {
             
             circuitBreaker.recordSuccess();
             return ProcessingResult.success(duplicates, ProcessingMode.AI_ASSISTED, "azure-ai-search");
-            
+
         } catch (Exception e) {
             log.error("AI duplicate detection failed for claim: {}", claim.getId(), e);
             circuitBreaker.recordFailure();
@@ -168,7 +171,54 @@ public class DefaultAIOrchestrationService implements AIOrchestrationService {
                     .build();
         }
     }
-    
+
+    @Override
+    public ProcessingResult<List<ClaimSimilarityResult>> findSimilarClaims(Claim claim) {
+        if (circuitBreaker.isOpen()) {
+            log.warn("Circuit breaker is OPEN. Semantic search unavailable for claim: {}", claim.getId());
+            return ProcessingResult.<List<ClaimSimilarityResult>>builder()
+                    .data(Collections.emptyList())
+                    .mode(ProcessingMode.SEMI_AUTOMATIC)
+                    .aiAvailable(false)
+                    .build();
+        }
+
+        try {
+            List<ClaimSimilarityResult> results = semanticSearchService.findSimilarClaims(claim, 5);
+            log.info("Semantic search found {} similar claims for claim: {}", results.size(), claim.getId());
+            circuitBreaker.recordSuccess();
+            return ProcessingResult.success(results, ProcessingMode.AI_ASSISTED, "azure-ai-search");
+        } catch (Exception e) {
+            log.error("Semantic search failed for claim: {}", claim.getId(), e);
+            circuitBreaker.recordFailure();
+            return ProcessingResult.<List<ClaimSimilarityResult>>builder()
+                    .data(Collections.emptyList())
+                    .mode(ProcessingMode.SEMI_AUTOMATIC)
+                    .aiAvailable(false)
+                    .build();
+        }
+    }
+
+    @Override
+    public ClaimRecommendation recommendRouting(Claim claim, ClaimContext context) {
+        if (circuitBreaker.isOpen()) {
+            log.warn("Circuit breaker is OPEN. ReAct agent unavailable for claim: {}", claim.getId());
+            return new ClaimRecommendation("HITL", "AI unavailable, defaulting to human review", 0.0, List.of(), "n/a");
+        }
+
+        try {
+            ClaimRecommendation rec = reactAgent.recommend(claim, context);
+            circuitBreaker.recordSuccess();
+            log.info("ReAct agent recommended {} for claim {} with confidence {}",
+                rec.decision(), claim.getId(), rec.confidence());
+            return rec;
+        } catch (Exception e) {
+            log.error("ReAct agent failed for claim: {}", claim.getId(), e);
+            circuitBreaker.recordFailure();
+            return new ClaimRecommendation("HITL", "AI reasoning failed, defaulting to human review", 0.0, List.of(), "n/a");
+        }
+    }
+
     @Override
     public boolean isAIAvailable() {
         return !circuitBreaker.isOpen();
