@@ -1,0 +1,53 @@
+# Build artifacts
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Maven
+.mvn/
+mvnw
+mvnw.cmd
+
+# Node / Frontend
+node_modules/
+claims-frontend/dist/
+claims-frontend/.vite/
+
+# IDE
+.idea/
+*.iml
+.classpath
+.project
+.factorypath
+.settings/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Docker volumes (local)
+postgres_data/
+kafka_data/
+valkey_data/
+
+# Compiled output
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test output
+test-output/
+surefire-reports/
