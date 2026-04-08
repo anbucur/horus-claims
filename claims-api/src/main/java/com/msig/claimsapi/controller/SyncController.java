@@ -92,6 +92,23 @@ public class SyncController {
         targetSystemRepository.save(ts);
     }
 
+    @PostMapping("/systems/{id}/activate")
+    public TargetSystemDto activateSystem(@PathVariable Long id) {
+        // Deactivate all target systems
+        targetSystemRepository.findAll().forEach(ts -> {
+            ts.setActive(false);
+            ts.setSandboxMode(true);
+            targetSystemRepository.save(ts);
+        });
+        // Activate and enable the specified one
+        TargetSystem ts = targetSystemRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Target system not found: " + id));
+        ts.setActive(true);
+        ts.setSandboxMode(false);
+        ts.setUpdatedAt(Instant.now());
+        return toDto(targetSystemRepository.save(ts));
+    }
+
     // ─── Field Mappings ─────────────────────────────────────────────────────
 
     @GetMapping("/systems/{systemId}/mappings")

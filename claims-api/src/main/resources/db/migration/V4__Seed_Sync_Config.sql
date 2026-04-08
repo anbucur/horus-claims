@@ -3,12 +3,12 @@
 INSERT INTO target_systems (name, base_url, auth_type, api_key, endpoints, retry_policy, sandbox_mode, active, created_at, updated_at)
 VALUES (
     'MSIG Core API',
-    'https://api.msigcore.com/v1',
+    'http://localhost:9090',
     'API_KEY',
     'msig_demo_key_placeholder',
     '{"createClaim": "/claims", "updateClaim": "/claims/{id}", "updateStatus": "/claims/{id}/status", "getClaim": "/claims/{id}", "healthCheck": "/health"}',
     '{"maxAttempts": 3, "backoffMs": 1000, "timeoutMs": 30000}',
-    TRUE,
+    FALSE,
     TRUE,
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP
