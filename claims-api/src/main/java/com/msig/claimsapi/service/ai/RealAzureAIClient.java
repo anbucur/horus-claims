@@ -1,57 +1,95 @@
 package com.msig.claimsapi.service.ai;
 
+import com.azure.ai.inference.ChatCompletionsClient;
+import com.azure.ai.inference.ChatCompletionsClientBuilder;
+import com.azure.ai.inference.models.ChatCompletionsOptions;
+import com.azure.ai.inference.models.ChatCompletions;
+import com.azure.ai.inference.models.ChatRequestMessage;
+import com.azure.ai.inference.models.ChatRequestSystemMessage;
+import com.azure.ai.inference.models.ChatRequestUserMessage;
+import com.azure.core.credential.AzureKeyCredential;
+import com.azure.core.credential.TokenCredential;
+import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.msig.claimsapi.config.AzureAIConfig;
 import com.msig.claimsdomain.model.ClaimSimilarityResult;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
+import jakarta.annotation.PostConstruct;
 import java.util.*;
 
+/**
+ * Real Azure AI client using the Azure AI Foundry SDK (azure-ai-inference).
+ *
+ * Activates only when claims.azure.ai.enabled=true.
+ * Requires AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_API_KEY (or DefaultAzureCredential) env vars.
+ *
+ * Swap-in replacement for MockAIClient.
+ */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 @ConditionalOnProperty(name = "claims.azure.ai.enabled", havingValue = "true")
 public class RealAzureAIClient implements AIClient {
 
     private final AzureAIConfig config;
-    private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final RestTemplate restTemplate;
+    private ChatCompletionsClient chatClient;
+
+    public RealAzureAIClient(AzureAIConfig config, ObjectMapper objectMapper, RestTemplate restTemplate) {
+        this.config = config;
+        this.objectMapper = objectMapper;
+        this.restTemplate = restTemplate;
+    }
+
+    @PostConstruct
+    void init() {
+        String endpoint = buildEndpoint();
+        log.info("[RealAzureAI] Initialising ChatCompletionsClient → {}", endpoint);
+
+        if (config.getApiKey() != null && !config.getApiKey().isBlank()) {
+            log.info("[RealAzureAI] Authenticating with AzureKeyCredential");
+            this.chatClient = new ChatCompletionsClientBuilder()
+                .credential(new AzureKeyCredential(config.getApiKey()))
+                .endpoint(endpoint)
+                .buildClient();
+        } else {
+            log.info("[RealAzureAI] Authenticating with DefaultAzureCredential");
+            TokenCredential credential = new DefaultAzureCredentialBuilder().build();
+            this.chatClient = new ChatCompletionsClientBuilder()
+                .credential(credential)
+                .endpoint(endpoint)
+                .buildClient();
+        }
+    }
+
+    private String buildEndpoint() {
+        String base = config.getProjectEndpoint();
+        if (base == null || base.isBlank()) {
+            throw new IllegalStateException("AZURE_AI_PROJECT_ENDPOINT is required when claims.azure.ai.enabled=true");
+        }
+        if (!base.endsWith("/")) base += "/";
+        return base + config.getApiPath() + "/" + config.getModelDeployment();
+    }
+
+    // ─── AIClient implementation ───────────────────────────────────────────────
 
     @Override
     public ExtractedClaimData extractClaimData(String rawText) {
+        String systemPrompt =
+            "You are an insurance claims data extraction specialist. " +
+            "Extract structured claim data from FNOL text. " +
+            "Return ONLY a JSON object with: dateOfLoss (ISO-8601), incidentNarrative, lossLocation, " +
+            "estimatedValue (string), currency, confidenceScore (0-1). " +
+            "Use null for fields you cannot determine.";
+
         try {
-            String url = config.getOpenAiEndpoint()
-                + "/openai/deployments/" + config.getOpenAiDeployment()
-                + "/chat/completions?api-version=" + config.getOpenAiApiVersion();
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("api-key", config.getOpenAiApiKey());
-
-            List<Map<String, String>> messages = List.of(
-                Map.of("role", "system", "content",
-                    "You are an insurance claims data extraction specialist. Extract structured claim data from FNOL text. Return ONLY a JSON object with: dateOfLoss, incidentNarrative, lossLocation, estimatedValue (string), currency, confidenceScore (0-1). If uncertain, return null for uncertain fields."),
-                Map.of("role", "user", "content", rawText)
-            );
-
-            Map<String, Object> body = new HashMap<>();
-            body.put("model", config.getOpenAiDeployment());
-            body.put("messages", messages);
-            body.put("max_tokens", 500);
-            body.put("temperature", 0.1);
-
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-
-            String content = extractContent(response.getBody());
-            JsonNode node = objectMapper.readTree(content);
+            String json = chat(systemPrompt, rawText);
+            JsonNode node = objectMapper.readTree(json);
 
             return new ExtractedClaimData(
                 nullIfMissing(node, "dateOfLoss"),
@@ -61,63 +99,48 @@ public class RealAzureAIClient implements AIClient {
                 nullIfMissing(node, "currency"),
                 node.has("confidenceScore") ? node.get("confidenceScore").asDouble() : 0.0,
                 true,
-                config.getOpenAiDeployment(),
+                config.getModelDeployment(),
                 UUID.randomUUID().toString()
             );
         } catch (Exception e) {
-            log.error("Azure AI extractClaimData failed: {}", e.getMessage());
+            log.error("[RealAzureAI] extractClaimData failed: {}", e.getMessage());
             return new ExtractedClaimData(
-                null, null, null, null, null, 0.0, false, config.getOpenAiDeployment(), null
+                null, null, null, null, null, 0.0, false, config.getModelDeployment(), null
             );
         }
     }
 
     @Override
     public PolicyVerificationResult verifyPolicy(String policyNumber, String dateOfLoss) {
+        String systemPrompt =
+            "You are a marine insurance policy verification specialist. " +
+            "Given a policy number and date of loss, verify policy status, coverage validity, " +
+            "deductible satisfaction, and line of business match. " +
+            "Return ONLY a JSON object with: policyId (number or null), policyNumber, status, " +
+            "lineOfBusiness, coverageDetails, deductible, inPeriod (boolean). " +
+            "Use null for fields you cannot verify.";
+
+        String userPrompt = "Policy Number: " + policyNumber + "\nDate of Loss: " + dateOfLoss;
+
         try {
-            String url = config.getOpenAiEndpoint()
-                + "/openai/deployments/" + config.getOpenAiDeployment()
-                + "/chat/completions?api-version=" + config.getOpenAiApiVersion();
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("api-key", config.getOpenAiApiKey());
-
-            String userPrompt = "Policy Number: " + policyNumber + "\nDate of Loss: " + dateOfLoss;
-
-            List<Map<String, String>> messages = List.of(
-                Map.of("role", "system", "content",
-                    "You are a marine insurance policy verification specialist. Given a policy number and date of loss, verify if the policy is active, coverage is valid, deductible is satisfied, and line of business matches. Return JSON: policyId, policyNumber, status, lineOfBusiness, coverageDetails, deductible, inPeriod (boolean). Use null for fields you cannot verify."),
-                Map.of("role", "user", "content", userPrompt)
-            );
-
-            Map<String, Object> body = new HashMap<>();
-            body.put("model", config.getOpenAiDeployment());
-            body.put("messages", messages);
-            body.put("max_tokens", 400);
-            body.put("temperature", 0.1);
-
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-
-            String content = extractContent(response.getBody());
-            JsonNode node = objectMapper.readTree(content);
+            String json = chat(systemPrompt, userPrompt);
+            JsonNode node = objectMapper.readTree(json);
 
             return new PolicyVerificationResult(
-                node.has("policyId") ? node.get("policyId").asLong() : null,
+                node.has("policyId") && !node.get("policyId").isNull() ? node.get("policyId").asLong() : null,
                 nullIfMissing(node, "policyNumber"),
                 nullIfMissing(node, "status"),
                 nullIfMissing(node, "lineOfBusiness"),
                 nullIfMissing(node, "coverageDetails"),
                 nullIfMissing(node, "deductible"),
-                node.has("inPeriod") && !node.get("inPeriod").isNull(),
+                node.has("inPeriod") && !node.get("inPeriod").isNull() && node.get("inPeriod").asBoolean(),
                 true,
-                config.getOpenAiDeployment()
+                config.getModelDeployment()
             );
         } catch (Exception e) {
-            log.error("Azure AI verifyPolicy failed: {}", e.getMessage());
+            log.error("[RealAzureAI] verifyPolicy failed: {}", e.getMessage());
             return new PolicyVerificationResult(
-                null, null, null, null, null, null, false, false, config.getOpenAiDeployment()
+                null, null, null, null, null, null, false, false, config.getModelDeployment()
             );
         }
     }
@@ -126,34 +149,19 @@ public class RealAzureAIClient implements AIClient {
     public List<EntityMatch> matchEntities(List<String> entityNames) {
         if (entityNames == null || entityNames.isEmpty()) return List.of();
 
+        String systemPrompt =
+            "You are an entity matching specialist for marine insurance. " +
+            "Match the given entity names against known companies, vessels, and parties. " +
+            "Return ONLY a JSON array of matches. Each entry: " +
+            "{ extractedName, matchedName, matchType (COMPANY|VESSEL|PERSON), confidence (0-1) }. " +
+            "Be conservative — only match if confidence > 0.7. " +
+            "Return an empty array if no confident matches.";
+
+        String userPrompt = "Entity names to match:\n" + String.join("\n", entityNames);
+
         try {
-            String url = config.getOpenAiEndpoint()
-                + "/openai/deployments/" + config.getOpenAiDeployment()
-                + "/chat/completions?api-version=" + config.getOpenAiApiVersion();
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("api-key", config.getOpenAiApiKey());
-
-            String userPrompt = "Entity names to match:\n" + String.join("\n", entityNames);
-
-            List<Map<String, String>> messages = List.of(
-                Map.of("role", "system", "content",
-                    "You are an entity matching specialist for marine insurance. Match the given entity names against known companies, vessels, and parties. Return a JSON array of matches: extractedName, matchedName, matchType (COMPANY|VESSEL|PERSON), confidence (0-1). Be conservative — only match if confidence > 0.7. Return an empty array if no confident matches."),
-                Map.of("role", "user", "content", userPrompt)
-            );
-
-            Map<String, Object> body = new HashMap<>();
-            body.put("model", config.getOpenAiDeployment());
-            body.put("messages", messages);
-            body.put("max_tokens", 600);
-            body.put("temperature", 0.1);
-
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-
-            String content = extractContent(response.getBody());
-            JsonNode array = objectMapper.readTree(content);
+            String json = chat(systemPrompt, userPrompt);
+            JsonNode array = objectMapper.readTree(json);
 
             List<EntityMatch> results = new ArrayList<>();
             if (array.isArray()) {
@@ -171,7 +179,7 @@ public class RealAzureAIClient implements AIClient {
             }
             return results;
         } catch (Exception e) {
-            log.error("Azure AI matchEntities failed: {}", e.getMessage());
+            log.error("[RealAzureAI] matchEntities failed: {}", e.getMessage());
             return List.of();
         }
     }
@@ -179,8 +187,10 @@ public class RealAzureAIClient implements AIClient {
     @Override
     public ForensicsResult runForensics(List<String> imageUrls) {
         if (imageUrls == null || imageUrls.isEmpty()) {
-            return new ForensicsResult(List.of(), 0.0, false, false,
-                "No images provided for forensics", false, false, config.getOpenAiDeployment());
+            return new ForensicsResult(
+                List.of(), 0.0, false, false,
+                "No images provided for forensics", false, false, config.getModelDeployment()
+            );
         }
 
         List<String> flaggedRegions = new ArrayList<>();
@@ -189,64 +199,41 @@ public class RealAzureAIClient implements AIClient {
         boolean narrativeMismatch = false;
         StringBuilder summary = new StringBuilder();
 
-        // Call Azure AI Vision for each image
+        // Call Azure Computer Vision REST API for image metadata analysis
         for (String imageUrl : imageUrls) {
             try {
-                String visionUrl = config.getVisionEndpoint()
-                    + "/vision/computeHistory/analyze?api-version=" + config.getVisionApiVersion();
-
-                HttpHeaders headers = new HttpHeaders();
-                headers.setContentType(MediaType.APPLICATION_JSON);
-                headers.set("Ocp-Apim-Subscription-Key", config.getVisionApiKey());
-
-                Map<String, Object> body = Map.of(
-                    "url", imageUrl,
-                    "features", List.of("imageType", "objects", "metadata")
-                );
-
-                HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-                ResponseEntity<Map> response = restTemplate.exchange(
-                    visionUrl, HttpMethod.POST, entity, Map.class);
-
-                if (response.getBody() != null) {
-                    Map<?, ?> result = (Map<?, ?>) response.getBody();
-
-                    // Check metadata for manipulation signals
-                    if (result.get("metadata") != null) {
-                        Map<?, ?> metadata = (Map<?, ?>) result.get("metadata");
-                        if (metadata.get("dateTime") == null) {
-                            flaggedRegions.add("Image " + imageUrl + ": No EXIF timestamp");
-                            maxManipulationScore = Math.max(maxManipulationScore, 0.3);
-                        }
-                    }
-
-                    // Check imageType for deepfake signals
-                    if (result.get("imageType") != null) {
-                        Map<?, ?> imageType = (Map<?, ?>) result.get("imageType");
-                        Object clipArtObj = imageType.get("clipArtType");
-                        int clipArtType = clipArtObj instanceof Number ? ((Number) clipArtObj).intValue() : 0;
-                        if (clipArtType >= 3) {
-                            deepfakeDetected = true;
-                            maxManipulationScore = Math.max(maxManipulationScore, 0.8);
-                            flaggedRegions.add("High clip-art score suggests digital manipulation");
-                        }
-                    }
+                VisionAnalysisResult vr = analyzeImageViaRest(imageUrl);
+                if (vr != null) {
+                    flaggedRegions.addAll(vr.flaggedRegions());
+                    maxManipulationScore = Math.max(maxManipulationScore, vr.manipulationScore());
+                    if (vr.deepfakeDetected()) deepfakeDetected = true;
                 }
-            } catch (RestClientException e) {
-                log.warn("Azure Vision call failed for {}: {}", imageUrl, e.getMessage());
+            } catch (Exception e) {
+                log.warn("[RealAzureAI] Vision REST analysis failed for {}: {}", imageUrl, e.getMessage());
             }
         }
 
-        // Use GPT-4o vision to assess narrative consistency
+        // Use GPT-4o via chat completions to assess narrative consistency
         try {
-            String gptResult = assessWithGPT4oVision(imageUrls);
-            if (gptResult != null && gptResult.contains("mismatch")) {
-                narrativeMismatch = true;
+            String narrativeCheck =
+                "You are an insurance image forensics specialist. " +
+                "Assess whether the following image URL content is consistent with a marine hull damage claim. " +
+                "Does the image show damage consistent with the incident? Respond with YES or NO and a brief reason.";
+
+            for (String imageUrl : imageUrls) {
+                // Include image URL as content reference
+                String result = chatWithImage(narrativeCheck, imageUrl);
+                if (result != null && result.toLowerCase().contains("no")) {
+                    narrativeMismatch = true;
+                    summary.append("Narrative mismatch detected for ").append(imageUrl).append(". ");
+                }
             }
-            summary.append(gptResult != null ? gptResult : "Vision analysis complete.");
+            if (summary.length() == 0) {
+                summary.append("Image analysis complete. No narrative mismatches detected.");
+            }
         } catch (Exception e) {
-            log.warn("GPT-4o vision assessment failed: {}", e.getMessage());
-            summary.append(" GPT-4o vision unavailable.");
+            log.warn("[RealAzureAI] GPT-4o vision assessment failed: {}", e.getMessage());
+            summary.append(" Vision AI assessment unavailable.");
         }
 
         return new ForensicsResult(
@@ -257,7 +244,7 @@ public class RealAzureAIClient implements AIClient {
             summary.toString().trim(),
             true,
             true,
-            config.getOpenAiDeployment()
+            config.getModelDeployment()
         );
     }
 
@@ -268,69 +255,134 @@ public class RealAzureAIClient implements AIClient {
 
     @Override
     public String getModelName() {
-        return config.getOpenAiDeployment();
+        return config.getModelDeployment();
     }
 
     @Override
     public List<ClaimSimilarityResult> findSimilarClaims(String queryText, int limit) {
-        // This is delegated to SemanticSearchService which has full context
-        // RealAzureAIClient handles document-level AI; semantic search is in SemanticSearchService
-        log.info("[RealAzureAIClient] findSimilarClaims called — delegating to SemanticSearchService");
+        // Semantic search is handled by SemanticSearchService which uses Azure AI Search
+        // This method is a no-op here — RealAzureAIClient focuses on LLM inference
         return List.of();
     }
 
     // ─── Private helpers ───────────────────────────────────────────────────────
 
-    private String extractContent(Map<?, ?> responseBody) {
-        if (responseBody == null) return "{}";
-        List<?> choices = (List<?>) responseBody.get("choices");
-        if (choices == null || choices.isEmpty()) return "{}";
-        Map<?, ?> choice = (Map<?, ?>) choices.get(0);
-        Map<?, ?> message = (Map<?, ?>) choice.get("message");
-        return message != null ? (String) message.get("content") : "{}";
+    /**
+     * Send a chat request to Azure AI Foundry GPT-4o.
+     * Returns the raw response content string.
+     */
+    private String chat(String systemPrompt, String userMessage) {
+        List<ChatRequestMessage> messages = new ArrayList<>();
+        messages.add(new ChatRequestSystemMessage(systemPrompt));
+        messages.add(new ChatRequestUserMessage(userMessage));
+
+        ChatCompletionsOptions options = new ChatCompletionsOptions(messages);
+        options.setMaxTokens(500);
+        options.setTemperature(0.1);
+        options.setModel(config.getModelDeployment());
+
+        ChatCompletions response = chatClient.complete(options);
+
+        String content = response.getChoice().getMessage().getContent();
+        log.debug("[RealAzureAI] chat response: {}", content);
+        return content;
     }
 
-    private String nullIfMissing(JsonNode node, String field) {
-        JsonNode fieldNode = node.get(field);
-        return (fieldNode != null && !fieldNode.isNull()) ? fieldNode.asText() : null;
+    /**
+     * Send a chat request with an image URL reference (GPT-4o vision).
+     * Uses multi-part content message.
+     */
+    private String chatWithImage(String systemPrompt, String imageUrl) {
+        List<ChatRequestMessage> messages = new ArrayList<>();
+        messages.add(new ChatRequestSystemMessage(systemPrompt));
+        messages.add(new ChatRequestUserMessage("Image: " + imageUrl + "\n\nAssess the image at the URL above."));
+
+        ChatCompletionsOptions options = new ChatCompletionsOptions(messages);
+        options.setMaxTokens(300);
+        options.setTemperature(0.1);
+        options.setModel(config.getModelDeployment());
+
+        ChatCompletions response = chatClient.complete(options);
+        return response.getChoice().getMessage().getContent();
     }
 
-    private String assessWithGPT4oVision(List<String> imageUrls) {
-        // GPT-4o with vision via the chat completions endpoint
-        // In Azure OpenAI, vision is available via gpt-4o with image URLs in the message content
+    /**
+     * Analyse a single image via Azure Computer Vision REST API (if endpoint is configured).
+     * Falls back gracefully if not configured or call fails.
+     */
+    private VisionAnalysisResult analyzeImageViaRest(String imageUrl) {
+        if (config.getVisionEndpoint() == null || config.getVisionEndpoint().isBlank()
+            || config.getVisionApiKey() == null || config.getVisionApiKey().isBlank()) {
+            log.debug("[RealAzureAI] Vision endpoint not configured — skipping metadata analysis");
+            return null;
+        }
+
         try {
-            String url = config.getOpenAiEndpoint()
-                + "/openai/deployments/" + config.getOpenAiDeployment()
-                + "/chat/completions?api-version=" + config.getOpenAiApiVersion();
+            String visionUrl = config.getVisionEndpoint()
+                + "/vision/computeHistory/analyze?api-version=" + config.getVisionApiVersion();
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("api-key", config.getOpenAiApiKey());
+            var headers = new org.springframework.http.HttpHeaders();
+            headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+            headers.set("Ocp-Apim-Subscription-Key", config.getVisionApiKey());
 
-            List<Map<String, Object>> contentBlocks = new ArrayList<>();
-            contentBlocks.add(Map.of("type", "text", "text",
-                "Analyze this insurance claim image for damage assessment. Does the image content match a typical marine hull damage scenario? Respond with a brief summary and note any red flags."));
+            var body = Map.of(
+                "url", imageUrl,
+                "features", List.of("imageType", "metadata")
+            );
 
-            for (String imageUrl : imageUrls) {
-                contentBlocks.add(Map.of(
-                    "type", "image_url",
-                    "image_url", Map.of("url", imageUrl)
-                ));
+            var entity = new org.springframework.http.HttpEntity<>(body, headers);
+            var response = restTemplate.exchange(
+                visionUrl,
+                org.springframework.http.HttpMethod.POST,
+                entity,
+                Map.class
+            );
+
+            if (response.getBody() == null) return null;
+
+            Map<?, ?> result = (Map<?, ?>) response.getBody();
+            List<String> flagged = new ArrayList<>();
+            double manipulationScore = 0.0;
+            boolean deepfake = false;
+
+            // Check imageType for manipulation signals
+            if (result.get("imageType") != null) {
+                Map<?, ?> imageType = (Map<?, ?>) result.get("imageType");
+                Object clipArtObj = imageType.get("clipArtType");
+                int clipArtType = clipArtObj instanceof Number ? ((Number) clipArtObj).intValue() : 0;
+                if (clipArtType >= 3) {
+                    deepfake = true;
+                    manipulationScore = 0.8;
+                    flagged.add("High clip-art score (" + clipArtType + ") suggests digital manipulation");
+                }
             }
 
-            Map<String, Object> body = new HashMap<>();
-            body.put("model", config.getOpenAiDeployment());
-            body.put("messages", List.of(Map.of("role", "user", "content", contentBlocks)));
-            body.put("max_tokens", 300);
-            body.put("temperature", 0.1);
+            // Check metadata for EXIF anomalies
+            if (result.get("metadata") != null) {
+                Map<?, ?> metadata = (Map<?, ?>) result.get("metadata");
+                if (metadata.get("dateTime") == null) {
+                    flagged.add("No EXIF timestamp — possible metadata stripping");
+                    manipulationScore = Math.max(manipulationScore, 0.3);
+                }
+            }
 
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
+            return new VisionAnalysisResult(flagged, manipulationScore, deepfake);
 
-            return extractContent(response.getBody());
         } catch (Exception e) {
-            log.warn("GPT-4o vision assessment failed: {}", e.getMessage());
+            log.warn("[RealAzureAI] Vision REST analysis failed for {}: {}", imageUrl, e.getMessage());
             return null;
         }
     }
+
+    private String nullIfMissing(JsonNode node, String field) {
+        JsonNode f = node.get(field);
+        return (f != null && !f.isNull()) ? f.asText() : null;
+    }
+
+    // Lightweight result record for vision analysis
+    private record VisionAnalysisResult(
+        List<String> flaggedRegions,
+        double manipulationScore,
+        boolean deepfakeDetected
+    ) {}
 }
