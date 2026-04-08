@@ -37,12 +37,6 @@
    +---------------+          +---------------+                +---------------+
    | nginx proxy   |          | PostgreSQL 16 |                | Valkey/Redis  |
    +---------------+          +---------------+                +---------------+
-                                       |
-                                       v
-                                +---------------+
-                                | Temporal      |
-                                | (workflow)    |
-                                +---------------+
 ```
 
 ---
@@ -50,7 +44,7 @@
 ## 3) What can be improved (highest value first)
 
 1. **Align architecture documentation with reality**
-   - README still mentions older details (for example Spring Boot 3.2), while Maven is on 4.0.5.
+   - Some docs and config files can drift on version/platform details.
    - Maintain one canonical “Architecture + Runtime” doc and link it from README.
 
 2. **Fix frontend CI contract**
