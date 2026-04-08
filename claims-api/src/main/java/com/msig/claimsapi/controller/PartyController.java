@@ -26,7 +26,7 @@ public class PartyController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Party> getPartyById(@PathVariable Long id) {
+    public ResponseEntity<Party> getPartyById(@PathVariable("id") Long id) {
         log.debug("GET /api/parties/{} - retrieving party", id);
         return partyService.findById(id)
                 .map(ResponseEntity::ok)
@@ -49,7 +49,7 @@ public class PartyController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Party> updateParty(@PathVariable Long id, @RequestBody Party party) {
+    public ResponseEntity<Party> updateParty(@PathVariable("id") Long id, @RequestBody Party party) {
         log.info("PUT /api/parties/{} - updating party", id);
         if (!id.equals(party.getId())) {
             return ResponseEntity.badRequest().build();
@@ -59,7 +59,7 @@ public class PartyController {
 
     @PatchMapping("/{id}/contact")
     public ResponseEntity<Party> updateContactInfo(
-            @PathVariable Long id,
+            @PathVariable("id") Long id,
             @RequestBody Map<String, String> body) {
         log.info("PATCH /api/parties/{}/contact - updating contact info", id);
         return ResponseEntity.ok(partyService.updateContactInfo(
@@ -71,7 +71,7 @@ public class PartyController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteParty(@PathVariable Long id) {
+    public ResponseEntity<Void> deleteParty(@PathVariable("id") Long id) {
         log.info("DELETE /api/parties/{} - deleting party", id);
         partyService.deleteById(id);
         return ResponseEntity.noContent().build();

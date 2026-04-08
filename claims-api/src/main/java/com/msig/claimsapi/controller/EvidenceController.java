@@ -25,7 +25,7 @@ public class EvidenceController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Evidence> getEvidenceById(@PathVariable Long id) {
+    public ResponseEntity<Evidence> getEvidenceById(@PathVariable("id") Long id) {
         log.debug("GET /api/evidence/{} - retrieving evidence", id);
         return evidenceRepository.findById(id)
                 .map(ResponseEntity::ok)
@@ -52,7 +52,7 @@ public class EvidenceController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Evidence> updateEvidence(@PathVariable Long id, @RequestBody Evidence evidence) {
+    public ResponseEntity<Evidence> updateEvidence(@PathVariable("id") Long id, @RequestBody Evidence evidence) {
         log.info("PUT /api/evidence/{} - updating evidence", id);
         if (!id.equals(evidence.getId())) {
             return ResponseEntity.badRequest().build();
@@ -61,7 +61,7 @@ public class EvidenceController {
     }
 
     @PatchMapping("/{id}/quarantine")
-    public ResponseEntity<Evidence> quarantineEvidence(@PathVariable Long id) {
+    public ResponseEntity<Evidence> quarantineEvidence(@PathVariable("id") Long id) {
         log.info("PATCH /api/evidence/{}/quarantine - quarantining evidence", id);
         Evidence evidence = evidenceRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Evidence not found: " + id));
@@ -70,7 +70,7 @@ public class EvidenceController {
     }
 
     @PatchMapping("/{id}/release")
-    public ResponseEntity<Evidence> releaseEvidence(@PathVariable Long id) {
+    public ResponseEntity<Evidence> releaseEvidence(@PathVariable("id") Long id) {
         log.info("PATCH /api/evidence/{}/release - releasing evidence from quarantine", id);
         Evidence evidence = evidenceRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Evidence not found: " + id));
@@ -79,7 +79,7 @@ public class EvidenceController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteEvidence(@PathVariable Long id) {
+    public ResponseEntity<Void> deleteEvidence(@PathVariable("id") Long id) {
         log.info("DELETE /api/evidence/{} - deleting evidence", id);
         evidenceRepository.deleteById(id);
         return ResponseEntity.noContent().build();
