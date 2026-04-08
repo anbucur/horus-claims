@@ -47,6 +47,18 @@ public class Financials {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    public BigDecimal getReserveAmount() {
+        return Category.INDEMNITY.equals(category) && TransactionStatus.RESERVE.equals(status) ? amount : null;
+    }
+
+    public BigDecimal getPaidAmount() {
+        return TransactionStatus.PAYMENT.equals(status) ? amount : null;
+    }
+
+    public BigDecimal getApprovedAmount() {
+        return TransactionStatus.PAYMENT.equals(status) ? amount : null;
+    }
+
     public enum Category {
         INDEMNITY, ALAE
     }
