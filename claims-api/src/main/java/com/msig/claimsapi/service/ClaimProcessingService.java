@@ -5,6 +5,7 @@ import com.msig.claimsapi.event.ClaimApprovedSTPCEvent;
 import com.msig.claimsapi.event.ClaimRoutedToHITLEvent;
 import com.msig.claimsapi.event.ClaimStepCompletedEvent;
 import com.msig.claimsapi.repository.ClaimRepository;
+import com.msig.claimsapi.service.ai.AICircuitBreaker;
 import com.msig.claimsapi.service.ai.AIOrchestrationService;
 import com.msig.claimsapi.service.ai.TextSimilarityDuplicateDetector;
 import com.msig.claimsapi.service.audit.ClaimAuditService;
@@ -15,6 +16,7 @@ import com.msig.claimsdomain.entities.Policy;
 import com.msig.claimsdomain.model.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +34,7 @@ public class ClaimProcessingService {
     private final ClaimRepository claimRepository;
     private final TextSimilarityDuplicateDetector duplicateDetector;
     private final AIOrchestrationService aiOrchestrationService;
+    private final AICircuitBreaker aiCircuitBreaker;
     private final ClaimWorkflowStateMachine stateMachine;
     private final ProcessingConfig processingConfig;
     private final ApplicationEventPublisher eventPublisher;
@@ -41,9 +44,28 @@ public class ClaimProcessingService {
     public ProcessingResult<Claim> processClaim(Long claimId, ProcessingMode mode) {
         String traceId = UUID.randomUUID().toString();
         log.info("Starting claim processing for claim {} with mode {} (traceId: {})", claimId, mode, traceId);
+
+        MDC.put("claimId", claimId.toString());
+        try {
         
         Claim claim = claimRepository.findByIdWithPolicy(claimId)
                 .orElseThrow(() -> new IllegalArgumentException("Claim not found: " + claimId));
+
+        if (aiCircuitBreaker.isOpen()) {
+            log.warn("AI circuit breaker OPEN — routing claim {} to HITL", claimId);
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
+            claim.setWorkflowStatus(Claim.WorkflowStatus.HITL);
+            claimRepository.save(claim);
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.HITL, "SYSTEM",
+                    "AI circuit breaker open");
+            return ProcessingResult.<Claim>builder()
+                    .data(claim)
+                    .mode(ProcessingMode.FULL_MANUAL)
+                    .aiAvailable(false)
+                    .warnings(List.of("AI circuit breaker is open — routed to HITL"))
+                    .traceId(traceId)
+                    .build();
+        }
         
         ProcessingMode effectiveMode = determineEffectiveMode(mode);
         
@@ -51,6 +73,7 @@ public class ClaimProcessingService {
             ProcessingResult<ExtractedClaimData> extractionResult = extract(claim, effectiveMode, traceId);
             if (extractionResult.isAiAvailable() && extractionResult.getData() != null) {
                 claim.setAiConfidenceScore(extractionResult.getData().getConfidenceScore());
+                aiCircuitBreaker.recordSuccess();
             }
             
             ProcessingResult<PolicyVerificationResult> verifyResult = verifyPolicy(claim, effectiveMode, traceId);
@@ -65,6 +88,7 @@ public class ClaimProcessingService {
             
         } catch (Exception e) {
             log.error("Error processing claim {}: {}", claimId, e.getMessage(), e);
+            aiCircuitBreaker.recordFailure();
             Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.HITL);
             claimRepository.save(claim);
@@ -77,6 +101,9 @@ public class ClaimProcessingService {
                     .warnings(List.of("Processing failed: " + e.getMessage()))
                     .traceId(traceId)
                     .build();
+        }
+        } finally {
+            MDC.remove("claimId");
         }
     }
     
@@ -93,6 +120,17 @@ public class ClaimProcessingService {
                     "FULL_MANUAL mode: AI extraction skipped");
             return ProcessingResult.empty(mode);
         }
+
+        if (aiCircuitBreaker.isOpen()) {
+            log.warn("AI circuit breaker OPEN — routing claim {} to HITL during extract", claim.getId());
+            Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
+            claim.setWorkflowStatus(Claim.WorkflowStatus.HITL);
+            claimRepository.save(claim);
+            auditService.logStatusChange(claim, fromStatus, Claim.WorkflowStatus.HITL, "SYSTEM",
+                    "AI circuit breaker open during extraction");
+            emitRoutedToHITLEvent(claim, "AI circuit breaker open", traceId);
+            return ProcessingResult.empty(ProcessingMode.FULL_MANUAL);
+        }
         
         FNOLDocument fnolDocument = FNOLDocument.builder()
                 .claimId(claim.getId())
@@ -103,6 +141,7 @@ public class ClaimProcessingService {
         ProcessingResult<ExtractedClaimData> result = aiOrchestrationService.extractClaimData(fnolDocument);
         
         if (result.isAiAvailable() && result.getData() != null) {
+            aiCircuitBreaker.recordSuccess();
             Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.VERIFYING);
             claim.setAiConfidenceScore(result.getData().getConfidenceScore());
@@ -112,6 +151,7 @@ public class ClaimProcessingService {
 
             emitStepCompletedEvent(claim, "EXTRACTING", result, traceId);
         } else {
+            aiCircuitBreaker.recordFailure();
             log.warn("AI extraction returned no data for claim {}, routing to HITL", claim.getId());
             Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.HITL);
@@ -132,6 +172,11 @@ public class ClaimProcessingService {
             log.info("FULL_MANUAL mode: skipping AI policy verification");
             return ProcessingResult.empty(mode);
         }
+
+        if (aiCircuitBreaker.isOpen()) {
+            log.warn("AI circuit breaker OPEN — skipping policy verification for claim {}", claim.getId());
+            return ProcessingResult.empty(ProcessingMode.FULL_MANUAL);
+        }
         
         Policy policy = claim.getPolicy();
         if (policy == null) {
@@ -151,6 +196,7 @@ public class ClaimProcessingService {
         ProcessingResult<PolicyVerificationResult> result = aiOrchestrationService.verifyPolicy(claim, policy);
 
         if (result.isAiAvailable() && result.getData() != null) {
+            aiCircuitBreaker.recordSuccess();
             Claim.WorkflowStatus fromStatus = claim.getWorkflowStatus();
             claim.setWorkflowStatus(Claim.WorkflowStatus.VERIFYING);
             claimRepository.save(claim);
@@ -169,6 +215,11 @@ public class ClaimProcessingService {
         if (mode == ProcessingMode.FULL_MANUAL) {
             log.info("FULL_MANUAL mode: skipping AI entity matching");
             return ProcessingResult.empty(mode);
+        }
+
+        if (aiCircuitBreaker.isOpen()) {
+            log.warn("AI circuit breaker OPEN — skipping entity matching for claim {}", claim.getId());
+            return ProcessingResult.empty(ProcessingMode.FULL_MANUAL);
         }
         
         ExtractedEntities entities = ExtractedEntities.builder()
@@ -193,6 +244,11 @@ public class ClaimProcessingService {
         if (mode == ProcessingMode.FULL_MANUAL) {
             log.info("FULL_MANUAL mode: skipping AI forensics");
             return ProcessingResult.empty(mode);
+        }
+
+        if (aiCircuitBreaker.isOpen()) {
+            log.warn("AI circuit breaker OPEN — skipping forensics for claim {}", claim.getId());
+            return ProcessingResult.empty(ProcessingMode.FULL_MANUAL);
         }
         
         List<Evidence> evidence = claim.getEvidences();

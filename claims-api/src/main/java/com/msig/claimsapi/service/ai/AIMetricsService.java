@@ -1,6 +1,7 @@
 package com.msig.claimsapi.service.ai;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,12 @@ public class AIMetricsService {
     private final ConcurrentHashMap<String, Counter> successCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> failureCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Timer> latencyTimers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, DistributionSummary> promptTokenSummaries = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, DistributionSummary> completionTokenSummaries = new ConcurrentHashMap<>();
+
+    // GPT-4o pricing per 1K tokens (USD)
+    private static final double PROMPT_COST_PER_1K = 0.005;
+    private static final double COMPLETION_COST_PER_1K = 0.015;
 
     public AIMetricsService(MeterRegistry registry) {
         this.registry = registry;
@@ -87,5 +94,46 @@ public class AIMetricsService {
             recordCall(operation, model, System.currentTimeMillis() - start, false, e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * Record token usage for a completed AI call and estimate cost.
+     *
+     * <p>Registers two DistributionSummary metrics (tagged by {@code operation}):
+     * <ul>
+     *   <li>{@code ai.tokens.prompt} — prompt token count per call</li>
+     *   <li>{@code ai.tokens.completion} — completion token count per call</li>
+     * </ul>
+     * Cost is logged at INFO using GPT-4o pricing ($0.005/1K prompt, $0.015/1K completion).
+     *
+     * @param operation      logical operation name (e.g. "extractClaimData")
+     * @param promptTokens   number of prompt tokens consumed
+     * @param completionTokens number of completion tokens generated
+     */
+    public void recordTokenUsage(String operation, int promptTokens, int completionTokens) {
+        String op = operation != null ? operation : "unknown";
+
+        promptTokenSummaries.computeIfAbsent(op, k ->
+            DistributionSummary.builder("ai.tokens.prompt")
+                .tag("operation", op)
+                .description("Prompt token count per AI call")
+                .baseUnit("tokens")
+                .register(registry)
+        ).record(promptTokens);
+
+        completionTokenSummaries.computeIfAbsent(op, k ->
+            DistributionSummary.builder("ai.tokens.completion")
+                .tag("operation", op)
+                .description("Completion token count per AI call")
+                .baseUnit("tokens")
+                .register(registry)
+        ).record(completionTokens);
+
+        double estimatedCostUsd =
+            (promptTokens / 1_000.0 * PROMPT_COST_PER_1K) +
+            (completionTokens / 1_000.0 * COMPLETION_COST_PER_1K);
+
+        log.info("[AI] operation={} promptTokens={} completionTokens={} estimatedCostUsd={}",
+            op, promptTokens, completionTokens, String.format("%.6f", estimatedCostUsd));
     }
 }
