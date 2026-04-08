@@ -118,7 +118,9 @@ npm run preview         # preview production build locally
 ```bash
 cd claims-ingest
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8001
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# OR
+python -m app.main
 ```
 
 ### Pre-commit Checks
@@ -503,6 +505,39 @@ api/
   claims.ts           ← claims API functions
   systems.ts          ← target system API functions
 ```
+
+---
+
+## CI/CD (GitHub Actions)
+
+Workflows in `.github/workflows/`:
+
+| File | Trigger | Purpose |
+|------|---------|---------|
+| `ci.yml` | Push/PR to `master` | Java compile → test → Docker build & push (on merge) |
+| `frontend.yml` | Changes in `claims-frontend/**` | `npm ci` → `npm run lint` → `npm run build` → `npm test --coverage` |
+| `deploy.yml` | Push to `master` | Docker Compose deployment (stub) |
+
+Docker images pushed to `horus/claims-api:latest` and `horus/claims-api:<sha>` (multi-platform: amd64 + arm64).
+
+Frontend CI uses **Node.js 20**; Java CI uses **Java 21 + Maven**.
+
+---
+
+## Environment Setup
+
+Copy `.env.example` to `.env` before first run:
+```bash
+cp .env.example .env
+```
+
+Key vars in `.env.example`:
+- `DB_PASSWORD` — PostgreSQL password
+- `VALKEY_PASSWORD` — Valkey/Redis password
+- `SPRING_PROFILES` — set to `docker` for containerized deployments
+- `KAFKA_BOOTSTRAP_SERVERS` — Kafka broker address
+- `DATABASE_URL` — Full PostgreSQL connection URL
+- Azure AI and Guidewire vars (commented out, for Phase 4/5)
 
 ---
 
