@@ -45,7 +45,7 @@
 
 1. **Align architecture documentation with reality**
    - Some docs and config files can drift on version/platform details.
-   - Maintain one canonical “Architecture + Runtime” doc and link it from README.
+   - Maintain one canonical “Architecture + Runtime” doc (`ARCHITECTURE.md`) and link it from README.
 
 2. **Fix frontend CI contract**
    - `frontend.yml` runs `npm test -- --coverage`, but `claims-frontend/package.json` has no `test` script.

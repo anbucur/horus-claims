@@ -27,6 +27,8 @@ The platform automates the claims intake lifecycle: from Outlook email ingestion
 └──────────┘    └─────────┘    └─────────┘
 ```
 
+Detailed component-level architecture (components, connections, usage/purpose): see [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
 ## Modules
 
 | Module | Technology | Description |
