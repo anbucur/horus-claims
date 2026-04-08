@@ -1,0 +1,9 @@
+{
+  "status": "succeeded",
+  "queryClaimId": "CLM-2024-0891",
+  "duplicatesChecked": 156,
+  "potentialDuplicates": [],
+  "similarityThreshold": 0.75,
+  "searchVectorGenerated": true,
+  "modelId": "azure-ai-search-duplicates-v2"
+}

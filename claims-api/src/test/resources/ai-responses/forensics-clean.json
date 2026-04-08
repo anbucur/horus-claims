@@ -1,0 +1,24 @@
+{
+  "status": "succeeded",
+  "imagesAnalyzed": 2,
+  "authenticImages": 2,
+  "manipulatedImages": [],
+  "overallScore": 0.95,
+  "anomalyFlags": [],
+  "quarantineRecommended": false,
+  "imageDetails": [
+    {
+      "fileName": "hull_damage_1.jpg",
+      "analysisResult": "AUTHENTIC",
+      "manipulationDetected": false,
+      "confidenceScore": 0.94
+    },
+    {
+      "fileName": "hull_damage_2.jpg",
+      "analysisResult": "AUTHENTIC",
+      "manipulationDetected": false,
+      "confidenceScore": 0.96
+    }
+  ],
+  "modelId": "azure-ai-vision-forensics-v4"
+}

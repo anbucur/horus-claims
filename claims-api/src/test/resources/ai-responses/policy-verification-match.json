@@ -1,0 +1,17 @@
+{
+  "status": "succeeded",
+  "policyVerification": {
+    "policyNumber": "MSC-HULL-2024-8891",
+    "policyActive": true,
+    "coverageValid": true,
+    "lineOfBusinessMatch": "MATCH",
+    "lineOfBusiness": "Hull & Machinery",
+    "deductibleSatisfied": true,
+    "deductibleAmount": 50000,
+    "coverageLimit": 15000000,
+    "lossWithinCoverage": true
+  },
+  "mismatchDetails": [],
+  "confidenceScore": 0.95,
+  "modelId": "azure-form-recognizer-policy-v2"
+}

@@ -49,6 +49,11 @@ spring:
       password: ${REDIS_PASSWORD:}
       timeout: 5000
 
+  task:
+    scheduling:
+      pool:
+        size: 2
+
 server:
   port: ${APP_PORT:8080}
   address: ${APP_HOST:0.0.0.0}
@@ -68,3 +73,13 @@ logging:
     com.msig.claimsapi: DEBUG
     org.hibernate.SQL: WARN
     org.hibernate.type.descriptor.sql.BasicBinder: WARN
+
+claims:
+  processing:
+    default-mode: AI_ASSISTED
+    stp-confidence-threshold: 85
+    hitl-confidence-threshold: 60
+    ai-enabled: true
+    circuit-breaker:
+      failure-threshold: 3
+      reset-minutes: 2

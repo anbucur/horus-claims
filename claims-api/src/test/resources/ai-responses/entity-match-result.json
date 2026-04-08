@@ -1,0 +1,30 @@
+{
+  "status": "succeeded",
+  "entityMatches": [
+    {
+      "entityType": "ASSURED",
+      "extractedName": "OceanTech Shipping Ltd",
+      "matchedName": "OceanTech Shipping Ltd",
+      "confidenceScore": 0.98,
+      "matchedEntityId": 1
+    },
+    {
+      "entityType": "BROKER",
+      "extractedName": "Marsh Ltd Rotterdam",
+      "matchedName": "Marsh Ltd Rotterdam",
+      "confidenceScore": 0.96,
+      "matchedEntityId": 2
+    },
+    {
+      "entityType": "VESSEL",
+      "extractedName": "MSC Oscar",
+      "imoNumber": "IMO 9703291",
+      "matchedName": "MSC Oscar",
+      "confidenceScore": 0.94,
+      "matchedEntityId": 1
+    }
+  ],
+  "allEntitiesMatched": true,
+  "overallConfidenceScore": 0.88,
+  "modelId": "azure-ai-search-entity-v3"
+}

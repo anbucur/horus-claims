@@ -1,0 +1,36 @@
+{
+  "status": "succeeded",
+  "modelId": "azure-document-intelligence-prebuilt-layout",
+  "createdDateTime": "2024-11-12T14:30:00Z",
+  "content": {
+    "claimReference": "CLM-2024-0891",
+    "dateOfLoss": "2024-11-12",
+    "lossLocation": "Rotterdam Berth 7, Netherlands",
+    "incidentNarrative": "Hull breach to starboard side due to pier allision during berthing maneuvers. Damage to plating and rudder. Vessel MSC Oscar was docking at Rotterdam Berth 7 when strong wind gust caused the vessel to impact the concrete pier structure.",
+    "estimatedLoss": {
+      "amount": 2400000,
+      "currency": "EUR"
+    },
+    "extractedParties": [
+      {
+        "role": "assured",
+        "name": "OceanTech Shipping Ltd",
+        "contact": "operations@oceantech.com"
+      },
+      {
+        "role": "broker",
+        "name": "Marsh Ltd Rotterdam",
+        "contact": "j.visser@marsh.com"
+      }
+    ],
+    "extractedVessels": [
+      {
+        "name": "MSC Oscar",
+        "imoNumber": "IMO 9703291",
+        "vesselType": "Container Vessel",
+        "tonnage": 4500
+      }
+    ]
+  },
+  "confidenceScore": 0.92
+}
