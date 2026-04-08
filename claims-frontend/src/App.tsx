@@ -7,6 +7,8 @@ import ClaimOverview from './screens/ClaimOverview'
 import Duplicates from './screens/Duplicates'
 import HITLConsole from './screens/HITLConsole'
 import Settings from './screens/Settings'
+import SyncQueue from './screens/SyncQueue'
+import TargetConfig from './screens/TargetConfig'
 import Layout from './components/Layout'
 
 export default function App() {
@@ -23,6 +25,8 @@ export default function App() {
           <Route path="duplicates" element={<Duplicates />} />
           <Route path="hitl-console" element={<HITLConsole />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="sync" element={<SyncQueue />} />
+          <Route path="sync/config" element={<TargetConfig />} />
         </Route>
       </Routes>
     </BrowserRouter>
