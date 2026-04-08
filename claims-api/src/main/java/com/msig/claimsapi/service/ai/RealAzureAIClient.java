@@ -11,6 +11,10 @@ import com.azure.ai.openai.models.ChatRequestUserMessage;
 import com.azure.core.credential.AzureKeyCredential;
 import com.azure.core.credential.TokenCredential;
 import com.azure.identity.DefaultAzureCredentialBuilder;
+import com.azure.search.documents.SearchClient;
+import com.azure.search.documents.SearchClientBuilder;
+import com.azure.search.documents.models.SearchOptions;
+import com.azure.search.documents.models.SearchResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.msig.claimsapi.config.AzureAIConfig;
@@ -55,6 +59,23 @@ public class RealAzureAIClient implements AIClient {
     private final AICacheService cacheService;
     private final AIMetricsService metricsService;
     private OpenAIClient openAIClient;
+
+    /**
+     * Lazily initialized credential used for Azure AI Search (and fallback for OpenAI).
+     * Cached to avoid repeated credential chain checks on every findSimilarClaims() call.
+     */
+    private volatile TokenCredential defaultAzureCredential;
+
+    private TokenCredential getOrCreateDefaultCredential() {
+        if (defaultAzureCredential == null) {
+            synchronized (this) {
+                if (defaultAzureCredential == null) {
+                    defaultAzureCredential = new DefaultAzureCredentialBuilder().build();
+                }
+            }
+        }
+        return defaultAzureCredential;
+    }
 
     public RealAzureAIClient(
             AzureAIConfig config,
@@ -421,8 +442,57 @@ public class RealAzureAIClient implements AIClient {
 
     @Override
     public List<ClaimSimilarityResult> findSimilarClaims(String queryText, int limit) {
-        // Semantic search handled by SemanticSearchService
-        return List.of();
+        String searchEndpoint = config.getSearchEndpoint();
+        String searchApiKey = config.getSearchApiKey();
+        String searchIndex = config.getSearchIndex();
+
+        if (searchEndpoint == null || searchEndpoint.isBlank()) {
+            log.debug("[RealAzureAI] Azure AI Search not configured — skipping semantic duplicate detection");
+            return List.of();
+        }
+
+        try {
+            log.info("[RealAzureAI] Searching for similar claims in index '{}', query length={}", searchIndex, queryText.length());
+
+            SearchClient searchClient = new SearchClientBuilder()
+                .endpoint(searchEndpoint)
+                .credential(searchApiKey != null && !searchApiKey.isBlank()
+                    ? new AzureKeyCredential(searchApiKey)
+                    : getOrCreateDefaultCredential())
+                .indexName(searchIndex)
+                .buildClient();
+
+            SearchOptions options = new SearchOptions()
+                .setTop(limit)
+                .setIncludeTotalCount(false);
+
+            List<ClaimSimilarityResult> results = new ArrayList<>();
+            for (SearchResult result : searchClient.search(queryText, options, null)) {
+                try {
+                    Map<String, Object> doc = result.getDocument(Map.class);
+                    Long claimId = doc.containsKey("claimId")
+                        ? Long.parseLong(String.valueOf(doc.get("claimId"))) : null;
+                    String reference = doc.containsKey("claimReference")
+                        ? String.valueOf(doc.get("claimReference")) : "";
+                    String narrative = doc.containsKey("incidentNarrative")
+                        ? String.valueOf(doc.get("incidentNarrative")) : "";
+                    double score = result.getScore() != null ? result.getScore() : 0.0;
+
+                    if (claimId != null) {
+                        results.add(new ClaimSimilarityResult(claimId, reference, narrative, score,
+                            "Azure AI Search semantic match"));
+                    }
+                } catch (Exception parseEx) {
+                    log.debug("[RealAzureAI] Skipping unparseable search result: {}", parseEx.getMessage());
+                }
+            }
+
+            log.info("[RealAzureAI] Found {} similar claims for query (top {})", results.size(), limit);
+            return results;
+        } catch (Exception e) {
+            log.warn("[RealAzureAI] Azure AI Search failed, returning empty list: {}", e.getMessage());
+            return List.of();
+        }
     }
 
     // ─── Retry helpers ─────────────────────────────────────────────────────
@@ -482,9 +552,13 @@ public class RealAzureAIClient implements AIClient {
 
     /**
      * Send a chat request to Azure AI Foundry GPT-4o via Chat Completions API.
-     * Respects configured timeouts.
+     * Respects configured timeouts and records token usage via AIMetricsService.
      */
     private String chatWithTimeout(String systemPrompt, String userMessage, int timeoutMs) {
+        return chatWithTimeout(systemPrompt, userMessage, timeoutMs, "chat");
+    }
+
+    private String chatWithTimeout(String systemPrompt, String userMessage, int timeoutMs, String operation) {
         List<ChatRequestMessage> messages = new ArrayList<>();
         messages.add(new ChatRequestSystemMessage(systemPrompt));
         messages.add(new ChatRequestUserMessage(userMessage));
@@ -497,6 +571,14 @@ public class RealAzureAIClient implements AIClient {
             config.getModelDeployment(),
             options
         );
+
+        if (response.getUsage() != null) {
+            metricsService.recordTokenUsage(
+                operation,
+                (int) response.getUsage().getPromptTokens(),
+                (int) response.getUsage().getCompletionTokens()
+            );
+        }
 
         String content = response.getChoices().get(0).getMessage().getContent();
         log.debug("[RealAzureAI] chat response: {}", content);

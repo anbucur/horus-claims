@@ -2,6 +2,8 @@ package com.msig.claimsapi.service.ai;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -25,7 +27,7 @@ public class AICacheService {
 
     private final Cache<String, AIClient.ExtractedClaimData> extractClaimDataCache;
 
-    public AICacheService() {
+    public AICacheService(MeterRegistry meterRegistry) {
         this.extractClaimDataCache = Caffeine.newBuilder()
             .maximumSize(MAX_SIZE)
             .expireAfterWrite(EXPIRE_AFTER_WRITE)
@@ -33,6 +35,18 @@ public class AICacheService {
             .build();
         log.info("[AICache] Initialised extractClaimData cache: maxSize={}, expireAfterWrite={}",
             MAX_SIZE, EXPIRE_AFTER_WRITE);
+
+        Gauge.builder("ai.cache.hit_rate", extractClaimDataCache, c -> c.stats().hitRate())
+            .description("AI extraction cache hit rate")
+            .register(meterRegistry);
+
+        Gauge.builder("ai.cache.eviction_count", extractClaimDataCache, c -> (double) c.stats().evictionCount())
+            .description("AI extraction cache eviction count")
+            .register(meterRegistry);
+
+        Gauge.builder("ai.cache.size", extractClaimDataCache, c -> (double) c.estimatedSize())
+            .description("AI extraction cache estimated size")
+            .register(meterRegistry);
     }
 
     /**
