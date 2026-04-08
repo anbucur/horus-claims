@@ -59,14 +59,14 @@ public class SyncController {
     }
 
     @GetMapping("/systems/{id}")
-    public TargetSystemDto getSystem(@PathVariable Long id) {
+    public TargetSystemDto getSystem(@PathVariable("id") Long id) {
         TargetSystem ts = targetSystemRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Target system not found: " + id));
         return toDto(ts);
     }
 
     @PutMapping("/systems/{id}")
-    public TargetSystemDto updateSystem(@PathVariable Long id, @RequestBody TargetSystemRequest req) {
+    public TargetSystemDto updateSystem(@PathVariable("id") Long id, @RequestBody TargetSystemRequest req) {
         TargetSystem ts = targetSystemRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Target system not found: " + id));
         if (req.name() != null) ts.setName(req.name());
@@ -85,7 +85,7 @@ public class SyncController {
     }
 
     @DeleteMapping("/systems/{id}")
-    public void deleteSystem(@PathVariable Long id) {
+    public void deleteSystem(@PathVariable("id") Long id) {
         TargetSystem ts = targetSystemRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Target system not found: " + id));
         ts.setActive(false);
@@ -93,7 +93,7 @@ public class SyncController {
     }
 
     @PostMapping("/systems/{id}/activate")
-    public TargetSystemDto activateSystem(@PathVariable Long id) {
+    public TargetSystemDto activateSystem(@PathVariable("id") Long id) {
         // Deactivate all target systems
         targetSystemRepository.findAll().forEach(ts -> {
             ts.setActive(false);

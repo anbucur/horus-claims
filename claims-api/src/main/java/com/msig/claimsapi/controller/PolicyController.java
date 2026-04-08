@@ -26,7 +26,7 @@ public class PolicyController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Policy> getPolicyById(@PathVariable Long id) {
+    public ResponseEntity<Policy> getPolicyById(@PathVariable("id") Long id) {
         log.debug("GET /api/policies/{} - retrieving policy", id);
         return policyService.findById(id)
                 .map(ResponseEntity::ok)
@@ -55,7 +55,7 @@ public class PolicyController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Policy> updatePolicy(@PathVariable Long id, @RequestBody Policy policy) {
+    public ResponseEntity<Policy> updatePolicy(@PathVariable("id") Long id, @RequestBody Policy policy) {
         log.info("PUT /api/policies/{} - updating policy", id);
         if (!id.equals(policy.getId())) {
             return ResponseEntity.badRequest().build();
@@ -65,7 +65,7 @@ public class PolicyController {
 
     @PatchMapping("/{id}/status")
     public ResponseEntity<Policy> updatePolicyStatus(
-            @PathVariable Long id,
+            @PathVariable("id") Long id,
             @RequestBody Map<String, String> body) {
         log.info("PATCH /api/policies/{}/status - updating policy status", id);
         Policy.PolicyStatus newStatus = Policy.PolicyStatus.valueOf(body.get("status"));
@@ -73,7 +73,7 @@ public class PolicyController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deletePolicy(@PathVariable Long id) {
+    public ResponseEntity<Void> deletePolicy(@PathVariable("id") Long id) {
         log.info("DELETE /api/policies/{} - deleting policy", id);
         policyService.deleteById(id);
         return ResponseEntity.noContent().build();
