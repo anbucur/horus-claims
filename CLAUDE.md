@@ -160,6 +160,10 @@ Claim ──→ (Many) ClaimReview           (HITL queue)
 Claim ──→ (Many) SettlementAction
 ```
 
+**Important — entity location split:**
+- `claims-domain/.../entities/` — JPA entities for the claims domain (Claim, Policy, Evidence, etc.)
+- `claims-domain/.../model/` — also contains JPA entities for the sync subsystem: `TargetSystem`, `SyncEvent`, `SyncTrigger`, `FieldMapping`, `ClaimSyncState` — do NOT move these to `entities/`
+
 ### WorkflowStatus State Machine
 ```
 RECEIVED → EXTRACTING → VERIFYING → HITL → STP → APPROVED → COMPLETED
@@ -168,12 +172,22 @@ RECEIVED → EXTRACTING → VERIFYING → HITL → STP → APPROVED → COMPLETE
 ```
 Valid transitions enforced by `ClaimWorkflowStateMachine.java`. All transitions logged to `ClaimStatusHistory`.
 
+`ClaimWorkflowStateMachine.WorkflowStep` is more granular than `WorkflowStatus`:
+- `VERIFYING` status covers three internal steps: `ENTITY_MATCHING`, `FORENSICS`, `DUPLICATE_CHECK`
+- These three steps all persist as `WorkflowStatus.VERIFYING` in the DB
+
+**Routing thresholds** (from `ProcessingConfig`):
+- `aiConfidenceScore >= 85` → status `STP` (auto-approve path)
+- `aiConfidenceScore` 60–84 → status `HITL` (manual review queue)
+- `aiConfidenceScore < 60` → status `HITL` (mandatory human review, not auto-rejected)
+- `ProcessingMode.FULL_MANUAL` → all AI steps skipped, claim routes directly to HITL
+
 ### Key Enums (`claims-domain`)
 - `WorkflowStatus` — RECEIVED, EXTRACTING, VERIFYING, HITL, STP, APPROVED, REJECTED, COMPLETED
 - `ProcessingMode` — AI_ASSISTED, SEMI_AUTOMATIC, FULL_MANUAL
 - `DocumentType` — SURVEY_REPORT, IMAGE, EMAIL, INVOICE
 - `PartyType` — ASSURED, BROKER, CARRIER
-- `SyncStatus` — PENDING, SYNCED, FAILED, SKIPPED
+- `SyncStatus` — PENDING, PROCESSING, COMPLETED, FAILED, RETRYING, SKIPPED
 
 ---
 
@@ -243,7 +257,11 @@ public interface ClaimRepository extends JpaRepository<Claim, Long> {
 
 ### Error Handling
 - Global `@RestControllerAdvice` handles exceptions — see `GlobalExceptionHandler`
-- Do not swallow exceptions; let them propagate or throw domain-specific exceptions
+- Do NOT catch and swallow exceptions in services; throw the appropriate type:
+  - `IllegalArgumentException` → 400 Bad Request
+  - `jakarta.persistence.EntityNotFoundException` → 404 Not Found
+  - `IllegalStateException` → 409 Conflict
+- Do NOT call Kafka directly from services — use `ApplicationEventPublisher`; Kafka is for ingest, not internal events
 
 ---
 
@@ -252,23 +270,28 @@ public interface ClaimRepository extends JpaRepository<Claim, Long> {
 ### Component Structure
 - **Functional components only** — no class components
 - All screens in `claims-frontend/src/screens/` (one file per screen)
-- Shared components in `claims-frontend/src/screens/components/` or `src/components/`
+- Shared components in `claims-frontend/src/components/`
 - `Layout.tsx` provides sidebar nav + breadcrumb header + `<Outlet>` for nested routes
 
-### API Layer
-- All HTTP calls go through `src/api/client.ts` (axios instance with base URL and interceptors)
-- Resource-specific files: `src/api/claims.ts`, `src/api/systems.ts`
-- Always define TypeScript interfaces for all request/response shapes
-
 ### TypeScript
-- **Strict mode** enabled: `"strict": true`, `noUnusedLocals`, `noFallthroughCasesInSwitch`
-- All API response shapes must have explicit interfaces (no `any`)
+- **Strict mode**: `"strict": true`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`
+- All API response shapes must have explicit interfaces — no `any` types
+- All component props must have explicit interfaces
 
 ### Styling
-- **TailwindCSS utility classes only** — no custom CSS unless absolutely necessary
+- **TailwindCSS utility classes only** — no `style={{}}` inline objects, no new CSS files
 - Use `clsx` for conditional class composition
-- **Inter font** throughout; **tabular numerals** (`font-variant-numeric: tabular-nums`) for all monetary/numeric data
+- **Inter font** (`font-sans`); **tabular numerals** class `tabular-nums` on all monetary/numeric data
 - Use `@tanstack/react-table` v8 for all data grids/tables
+- Custom Tailwind tokens (in `tailwind.config.js`): `brand.primary` (#0033A0), `brand.secondary` (#00A3E0), `surface.bg`, `surface.panel`, `status.critical`, `status.warning`, `status.verified`
+- Shared component classes defined in `src/index.css`: `.card`, `.btn-primary`, `.btn-secondary`, `.badge`, `.badge-extracting`, `.badge-hitl`, `.badge-stp`, `.badge-verifying`, `.badge-received` — use these, don't re-define them
+- **Icons**: inline SVG only — no icon library dependency
+
+### API Client
+- All HTTP calls go through `src/api/client.ts` — reads `VITE_API_URL` env var (defaults to `http://localhost:8080/api`)
+- Do NOT use `fetch()` directly — bypasses the error interceptor
+- All claims API functions + TypeScript interfaces live in `src/api/claims.ts`
+- All target-system functions in `src/api/systems.ts`
 
 ### Routing
 ```tsx
@@ -281,6 +304,7 @@ public interface ClaimRepository extends JpaRepository<Claim, Long> {
   </Route>
 </Routes>
 ```
+When adding a new screen: update **both** `App.tsx` (route) and `Layout.tsx` `navItems` array (sidebar link with inline SVG icon).
 
 ---
 
@@ -316,26 +340,34 @@ public interface ClaimRepository extends JpaRepository<Claim, Long> {
 | `V7__ClaimReview.sql` | HITL review queue |
 
 ### Schema Patterns
-- Primary keys: `BIGSERIAL` (auto-increment)
+- Primary keys: `BIGSERIAL PRIMARY KEY` → Java `Long` with `@GeneratedValue(strategy = GenerationType.IDENTITY)`
 - Monetary: `DECIMAL(19,2)` → Java `BigDecimal`
-- Large text: `TEXT` (incident narratives, classifications)
-- Audit fields: `created_at`, `updated_at` TIMESTAMP — auto-updated via DB triggers
+- Large text: `TEXT` (incident narratives, classifications, payloads) — not `VARCHAR`
+- Timestamps in main claims tables: `TIMESTAMP` (no timezone)
+- Timestamps in sync/event tables: `TIMESTAMP WITH TIME ZONE`
+- Boolean flags: `BOOLEAN NOT NULL DEFAULT FALSE` — never nullable booleans
+- Audit fields: `created_at`, `updated_at` TIMESTAMP — auto-updated via PL/pgSQL trigger `update_updated_at_column()` defined in V1. **Apply this trigger to every new table with an `updated_at` column.**
 - Indexes: on `workflow_status`, `policy_id`, `claim_id` for query performance
 - Foreign keys: `ON DELETE CASCADE` standard
+- Table naming: **singular** snake_case for main tables (`claim`, `policy`, `evidence`); **plural** for sync tables (`target_systems`, `sync_events`, `sync_triggers`, `field_mappings`, `claim_sync_state`). Do not mix conventions.
 
 ---
 
 ## Kafka Topics
 
-| Topic | Purpose |
-|-------|---------|
-| `claims-fnohl-ingest` | Inbound FNOL emails and documents (3 partitions) |
-| `claims-validation` | Validation results from ingest service |
-| `claims-audit` | Audit trail events |
-| `claims-status` | Workflow status change notifications |
-| `claims-settled` | Settlement completion events |
+| Topic | Producer | Consumer | Purpose |
+|-------|---------|----------|---------|
+| `claims-fnohl-ingest` | `claims-ingest` (Python) | `claims-api` | Inbound FNOL emails and documents (3 partitions) |
+| `claims-validation` | `claims-api` | `claims-ingest` | Validation result feedback |
+| `claims-audit` | both | — | Audit trail events |
+| `claims-status` | `claims-api` | — | Workflow status change notifications |
+| `claims-settled` | `claims-api` | — | Settlement completion events |
 
 Consumer group: `claims-api-group`
+
+**Spelling note**: `claims-fnohl-ingest` contains a deliberate 'h' (domain term). Do NOT create `claims-fnol-ingest` or rename it. The constant `INGEST_TOPIC` in `claims-ingest/app/main.py` matches exactly.
+
+All topics declared as `@Bean NewTopic` in `KafkaTopicConfig.java` — 3 partitions, replication factor 1.
 
 ---
 
@@ -406,15 +438,32 @@ claims:
       enabled: false                  # true = RealAzureAIClient; false = MockAIClient
 ```
 
-### AI Service Classes
-- `AIOrchestrationService` (interface) — `service/ai/`
-- `DefaultAIOrchestrationService` — full AI pipeline with Azure
-- `StubAIOrchestrationService` — deterministic stub for dev/test
-- `AICircuitBreaker` — wraps AI calls with Resilience4j circuit breaker
-- `ReActClaimAgent` — ReAct-pattern agent for claim analysis
-- `TextSimilarityDuplicateDetector` — duplicate detection without Azure
+### AI Service Classes (`service/ai/`)
 
-**Default**: When `claims.azure.ai.enabled=false`, `MockAIClient` is used — safe for local development with no Azure credentials.
+**Orchestration layer** (wired by `@ConditionalOnProperty`):
+- `AIOrchestrationService` (interface) — facade for all AI operations
+- `DefaultAIOrchestrationService` — active when `claims.processing.ai-enabled=true` (default); full pipeline
+- `StubAIOrchestrationService` — active when `claims.processing.ai-enabled=false`; returns empty `ProcessingResult`
+
+**Azure client layer** (wired by `@ConditionalOnProperty`):
+- `AIClient` (interface) — wraps the actual HTTP call to Azure
+- `RealAzureAIClient` — active when `claims.azure.ai.enabled=true`; uses Azure AI Foundry SDK v2. Endpoint format: `https://<resource>.services.ai.azure.com/api/projects/<project>` (NOT the deprecated `.azureml.ms` format)
+- `MockAIClient` — active by default (no Azure credentials required)
+
+**Agent layer** (active only when `claims.azure.ai.enabled=true`):
+- `ReActClaimAgent` (interface) — GPT-4o ReAct-pattern routing agent
+- `ReActClaimAgentImpl`
+
+**Circuit breaker**: `AICircuitBreaker` is a **custom implementation** — NOT Resilience4j (despite Resilience4j being in the BOM). It trips after 3 failures and resets after 120 seconds. States: CLOSED, OPEN, HALF_OPEN.
+
+**Duplicate detection fallback**: `TextSimilarityDuplicateDetector` uses PostgreSQL full-text search via `ClaimRepository.findSimilarByText` — works with no Azure credentials.
+
+**Default (local dev)**: `MockAIClient` + `StubAIOrchestrationService` — safe with no Azure credentials.
+
+### Adding a New AI Operation
+1. Add method to `AIOrchestrationService` interface
+2. Implement in `DefaultAIOrchestrationService` (real logic, wrapped in `AICircuitBreaker`) AND `StubAIOrchestrationService` (return `ProcessingResult.empty(ProcessingMode.FULL_MANUAL)`)
+3. Add method to `AIClient` interface; implement in both `MockAIClient` and `RealAzureAIClient`
 
 ---
 
@@ -457,15 +506,17 @@ claims:
 <type>(<scope>): <description>
 ```
 
-**Types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+**Types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`  
+**Scopes**: `claims-api`, `claims-domain`, `claims-ingest`, `claims-frontend`, `docker`, `db`
 
 **Examples**:
 ```
 feat(claims-api): add policy verification endpoint
-fix(domain): correct ClaimParty join column name
-docs(readme): add quick start section
-refactor(frontend): extract claims table to reusable component
+fix(claims-domain): correct ClaimParty join column name
+docs(claims-api): add OpenAPI annotations to SyncController
+refactor(claims-frontend): extract claims table to reusable component
 test(claims-api): add unit tests for FnolIntakeService
+chore(db): add V8 migration for claim notes table
 chore(docker): update postgres image to 16-alpine
 ```
 
@@ -538,6 +589,60 @@ Key vars in `.env.example`:
 - `KAFKA_BOOTSTRAP_SERVERS` — Kafka broker address
 - `DATABASE_URL` — Full PostgreSQL connection URL
 - Azure AI and Guidewire vars (commented out, for Phase 4/5)
+
+---
+
+## Sync Engine
+
+Pushes approved claims to external core systems via configurable REST calls.
+
+### Key Classes
+- `SyncEngine` — `@Async` `executeSync()`; field-level mapping via `FieldMapping`; retry with exponential backoff; uses `RestTemplate` (NOT `WebClient`)
+- `SyncScheduler` — `@Scheduled` jobs: process queue every **15 min**, retry failed every **60 sec**, health-check every **5 min**
+- `SyncEventListener` — listens to Spring events (`ClaimApprovedSTPEvent`, `ClaimSettledEvent`) and enqueues sync events
+
+### Sync Domain Models (in `claims-domain/.../model/`)
+- `TargetSystem` — configurable external system; `sandbox_mode=true` runs without committing to external system
+- `SyncEvent` — sync job with `SyncStatus`: PENDING, PROCESSING, COMPLETED, FAILED, RETRYING
+- `SyncTrigger`, `FieldMapping`, `ClaimSyncState`
+
+**Critical**: Do NOT disable `SyncScheduler` scheduled jobs — they must run continuously. Do NOT replace `RestTemplate` with `WebClient` in the sync engine without careful testing.
+
+---
+
+## Testing Conventions
+
+Tests live in `claims-api/src/test/java/com/msig/claimsapi/`.
+
+### Framework
+JUnit 5 + Mockito via `spring-boot-starter-test`. H2 in-memory DB for any tests needing a datasource.
+
+### Unit Test Pattern (use this for services)
+```java
+@ExtendWith(MockitoExtension.class)
+class ClaimServiceTest {
+    @InjectMocks
+    private ClaimService claimService;
+
+    @Mock
+    private ClaimRepository claimRepository;
+
+    @Test
+    void methodName_scenario_expectedBehavior() { ... }
+}
+```
+
+### Controller Test Pattern (use MockMvc without loading Spring context)
+```java
+MockMvc mockMvc = MockMvcBuilders
+    .standaloneSetup(controller)
+    .setControllerAdvice(new GlobalExceptionHandler())
+    .build();
+```
+
+**Do NOT use `@SpringBootTest`** — no integration tests exist and it requires a running database. Always use Mockito unit tests. Only use `@SpringBootTest` if a full Spring context is explicitly required and justified.
+
+Test naming convention: `methodName_scenario_expectedBehavior` (e.g., `intake_validRequest_returns200`).
 
 ---
 
