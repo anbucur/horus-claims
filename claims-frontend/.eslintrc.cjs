@@ -21,14 +21,4 @@ module.exports = {
     'no-fallthrough': 'error',
     'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
   },
-  overrides: [
-    {
-      files: ['**/*.test.ts', '**/*.test.tsx'],
-      globals: {
-        describe: 'readonly',
-        it: 'readonly',
-        expect: 'readonly',
-      },
-    },
-  ],
 }
