@@ -6,6 +6,7 @@ import com.msig.claimsapi.event.ClaimRoutedToHITLEvent;
 import com.msig.claimsapi.event.ClaimStepCompletedEvent;
 import com.msig.claimsapi.repository.ClaimRepository;
 import com.msig.claimsapi.service.ai.AIOrchestrationService;
+import com.msig.claimsapi.service.ai.TextSimilarityDuplicateDetector;
 import com.msig.claimsapi.service.workflow.ClaimWorkflowStateMachine;
 import com.msig.claimsdomain.entities.Claim;
 import com.msig.claimsdomain.entities.Evidence;
@@ -28,6 +29,7 @@ import java.util.UUID;
 public class ClaimProcessingService {
     
     private final ClaimRepository claimRepository;
+    private final TextSimilarityDuplicateDetector duplicateDetector;
     private final AIOrchestrationService aiOrchestrationService;
     private final ClaimWorkflowStateMachine stateMachine;
     private final ProcessingConfig processingConfig;
@@ -193,9 +195,9 @@ public class ClaimProcessingService {
     @Transactional
     public ProcessingResult<List<DuplicateMatch>> checkDuplicates(Claim claim, ProcessingMode mode, String traceId) {
         log.info("DUPLICATE_CHECK step for claim {} in mode {}", claim.getId(), mode);
-        
+
         if (mode == ProcessingMode.FULL_MANUAL) {
-            log.info("FULL_MANUAL mode: skipping AI duplicate detection");
+            log.info("FULL_MANUAL mode: skipping duplicate detection");
             return ProcessingResult.<List<DuplicateMatch>>builder()
                     .data(Collections.emptyList())
                     .mode(mode)
@@ -203,15 +205,29 @@ public class ClaimProcessingService {
                     .traceId(traceId)
                     .build();
         }
-        
-        ProcessingResult<List<DuplicateMatch>> result = aiOrchestrationService.detectDuplicates(claim);
-        
-        if (result.isAiAvailable() && result.getData() != null && !result.getData().isEmpty()) {
-            log.warn("Potential duplicates found for claim {}: {}", claim.getId(), result.getData().size());
+
+        // Use local TF-IDF similarity detector — works without external AI
+        List<DuplicateMatch> matches = duplicateDetector.findDuplicates(claim);
+
+        if (!matches.isEmpty()) {
+            log.warn("Potential duplicates found for claim {}: {} matches", claim.getId(), matches.size());
+            ProcessingResult<List<DuplicateMatch>> result = ProcessingResult.<List<DuplicateMatch>>builder()
+                    .data(matches)
+                    .mode(mode)
+                    .aiAvailable(false)
+                    .warnings(List.of("Duplicate detection used local TF-IDF similarity"))
+                    .traceId(traceId)
+                    .build();
             emitStepCompletedEvent(claim, "DUPLICATE_CHECK", result, traceId);
+            return result;
         }
-        
-        return result;
+
+        return ProcessingResult.<List<DuplicateMatch>>builder()
+                .data(Collections.emptyList())
+                .mode(mode)
+                .aiAvailable(false)
+                .traceId(traceId)
+                .build();
     }
     
     @Transactional
