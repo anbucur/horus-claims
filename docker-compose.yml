@@ -61,11 +61,13 @@ services:
   valkey:
     image: valkey/valkey:8.0-alpine
     container_name: claims-valkey
+    environment:
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD:-valkey_secure_pass}
     command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD:-valkey_secure_pass}"]
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:-valkey_secure_pass}", "ping"]
+      test: ["CMD-SHELL", "valkey-cli -a $$VALKEY_PASSWORD ping"]
       interval: 10s
       timeout: 5s
       retries: 5

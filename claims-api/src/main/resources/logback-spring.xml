@@ -33,6 +33,11 @@
     <logger name="com.msig.claimsapi" level="DEBUG" additivity="false">
         <appender-ref ref="JSON_CONSOLE"/>
     </logger>
+    <!--
+      Hibernate SQL and parameter binding are WARN by default to reduce noise in production.
+      To see SQL in development, set LOGGING_LEVEL_ORG_HIBERNATE_SQL=DEBUG via environment variable
+      or add 'logging.level.org.hibernate.SQL=DEBUG' to application-local.yml.
+    -->
     <logger name="org.hibernate.SQL" level="WARN" additivity="false">
         <appender-ref ref="JSON_CONSOLE"/>
     </logger>

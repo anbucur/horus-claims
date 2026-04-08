@@ -43,9 +43,8 @@ public class ClaimProcessingService {
     @Transactional
     public ProcessingResult<Claim> processClaim(Long claimId, ProcessingMode mode) {
         String traceId = UUID.randomUUID().toString();
-        log.info("Starting claim processing for claim {} with mode {} (traceId: {})", claimId, mode, traceId);
-
         MDC.put("claimId", claimId.toString());
+        log.info("Starting claim processing for claim {} with mode {} (traceId: {})", claimId, mode, traceId);
         try {
         
         Claim claim = claimRepository.findByIdWithPolicy(claimId)

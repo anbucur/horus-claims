@@ -4,11 +4,11 @@ import com.msig.claimsapi.repository.ClaimRepository;
 import com.msig.claimsapi.service.ClaimProcessingService;
 import com.msig.claimsdomain.entities.Claim;
 import com.msig.claimsdomain.model.*;
-import io.temporal.activity.Activity;
 import io.temporal.spring.boot.ActivityImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -92,11 +92,14 @@ public class ClaimProcessingActivitiesImpl implements ClaimProcessingActivities 
     }
 
     @Override
+    @Transactional
     public String routeClaim(Long claimId, ProcessingMode mode, double confidenceScore, String traceId) {
         log.info("[Activity] ROUTE claimId={} mode={} confidence={} traceId={}",
             claimId, mode, confidenceScore, traceId);
         Claim claim = loadClaim(claimId);
+        // Persist the confidence score before routing so the route() method reads the correct value
         claim.setAiConfidenceScore(confidenceScore);
+        claimRepository.save(claim);
         ProcessingResult<Claim> result = claimProcessingService.route(claim, mode, traceId);
         String status = result.getData() != null
             ? result.getData().getWorkflowStatus().name()

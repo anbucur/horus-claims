@@ -35,7 +35,8 @@ public class AIMetricsService {
     private final ConcurrentHashMap<String, DistributionSummary> promptTokenSummaries = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, DistributionSummary> completionTokenSummaries = new ConcurrentHashMap<>();
 
-    // GPT-4o pricing per 1K tokens (USD)
+    // GPT-4o pricing per 1K tokens (USD) — verify current rates at https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/.
+    // Make configurable via claims.ai.pricing.* if pricing changes frequently.
     private static final double PROMPT_COST_PER_1K = 0.005;
     private static final double COMPLETION_COST_PER_1K = 0.015;
 

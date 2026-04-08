@@ -102,8 +102,8 @@ class ClaimWorkflowControllerTest {
     void getProcessingStatus_returns200() throws Exception {
         when(claimService.findById(1L)).thenReturn(Optional.of(sampleClaim));
         when(processingConfig.getDefaultMode()).thenReturn(ProcessingMode.AI_ASSISTED);
-        when(processingConfig.getStpConfidenceThreshold()).thenReturn(85.0);
-        when(processingConfig.getHitlConfidenceThreshold()).thenReturn(60.0);
+        when(processingConfig.getStpConfidenceThreshold()).thenReturn(85);
+        when(processingConfig.getHitlConfidenceThreshold()).thenReturn(60);
         when(aiOrchestrationService.isAIAvailable()).thenReturn(true);
         when(circuitBreaker.getState()).thenReturn(AICircuitBreaker.State.CLOSED);
 

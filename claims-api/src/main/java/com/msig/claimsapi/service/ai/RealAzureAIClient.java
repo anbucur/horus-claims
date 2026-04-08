@@ -60,6 +60,23 @@ public class RealAzureAIClient implements AIClient {
     private final AIMetricsService metricsService;
     private OpenAIClient openAIClient;
 
+    /**
+     * Lazily initialized credential used for Azure AI Search (and fallback for OpenAI).
+     * Cached to avoid repeated credential chain checks on every findSimilarClaims() call.
+     */
+    private volatile TokenCredential defaultAzureCredential;
+
+    private TokenCredential getOrCreateDefaultCredential() {
+        if (defaultAzureCredential == null) {
+            synchronized (this) {
+                if (defaultAzureCredential == null) {
+                    defaultAzureCredential = new DefaultAzureCredentialBuilder().build();
+                }
+            }
+        }
+        return defaultAzureCredential;
+    }
+
     public RealAzureAIClient(
             AzureAIConfig config,
             ObjectMapper objectMapper,
@@ -441,7 +458,7 @@ public class RealAzureAIClient implements AIClient {
                 .endpoint(searchEndpoint)
                 .credential(searchApiKey != null && !searchApiKey.isBlank()
                     ? new AzureKeyCredential(searchApiKey)
-                    : new AzureKeyCredential(""))
+                    : getOrCreateDefaultCredential())
                 .indexName(searchIndex)
                 .buildClient();
 
