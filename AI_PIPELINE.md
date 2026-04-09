@@ -10,7 +10,7 @@ This document describes all AI-powered pipelines, features, and components in th
 2. [End-to-End Claim Processing Pipeline](#2-end-to-end-claim-processing-pipeline)
 3. [AI Component Catalogue](#3-ai-component-catalogue)
    - [AIClient (interface)](#aiclient-interface)
-   - [RealAzureAIClient](#realaazureaiiclient)
+   - [RealAzureAIClient](#realazureaiclient)
    - [MockAIClient](#mockaiclient)
    - [AIOrchestrationService (interface)](#aiorchestrationservice-interface)
    - [DefaultAIOrchestrationService](#defaultaiorchestrationservice)
@@ -67,7 +67,7 @@ This document describes all AI-powered pipelines, features, and components in th
 │  │  DocumentExtractionService  — Azure Document Intelligence OCR     │  │
 │  │  LLMSchemaExtractor         — GPT-4o schema-guided extraction     │  │
 │  │  AICircuitBreaker           — failure threshold + auto-reset      │  │
-│  │  AICacheService             — Caffeine LRU (5-min TTL, 1 000 max) │  │
+│  │  AICacheService             — Caffeine LRU (5-min TTL, 1,000 max) │  │
 │  │  AIMetricsService           — Micrometer counters + latency timers│  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -361,7 +361,7 @@ In-memory LRU cache for `extractClaimData` results using **Caffeine**.
 
 | Parameter | Value |
 |---|---|
-| Max size | 1 000 entries |
+| Max size | 1,000 entries |
 | TTL | 5 minutes (expireAfterWrite) |
 | Key | MD5 hash of the raw input text |
 | Stats | Recorded via Caffeine stats (hit count, miss count, hit rate, eviction count) |
@@ -528,7 +528,7 @@ In `FULL_MANUAL`, all AI primary steps are bypassed and the claim goes directly 
 
 ### Caching
 
-`AICacheService` uses MD5-keyed Caffeine cache (1 000 entries, 5-min TTL) for `extractClaimData`. Identical FNOL documents submitted within the TTL return instantly without an LLM call.
+`AICacheService` uses MD5-keyed Caffeine cache (1,000 entries, 5-min TTL) for `extractClaimData`. Identical FNOL documents submitted within the TTL return instantly without an LLM call.
 
 ---
 
