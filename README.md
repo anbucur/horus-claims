@@ -1,4 +1,4 @@
-# MSIG Specialty Marine — Cognitive Claims Processing Platform
+# Cognitive Claims Processing Platform
 
 ## Overview
 
