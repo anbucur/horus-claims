@@ -15,7 +15,6 @@
     <modules>
         <module>claims-domain</module>
         <module>claims-api</module>
-        <module>claims-ingest</module>
     </modules>
 
     <properties>
@@ -109,5 +108,11 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+        </plugins>
     </build>
 </project>

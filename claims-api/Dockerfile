@@ -2,7 +2,6 @@
 FROM eclipse-temurin:21-jdk-alpine AS builder
 WORKDIR /app
 
-ARG JAR_FILE=claims-api-*.jar
 ARG APP_VERSION=1.0.0
 
 # Copy project structure (context is project root)
@@ -13,8 +12,7 @@ COPY claims-api/pom.xml claims-api/pom.xml
 COPY claims-api/src claims-api/src
 
 # Build and package
-RUN apk add --no-cache maven
-RUN mvn package -DskipTests -pl claims-domain,claims-api
+RUN apk add --no-cache maven && mvn clean package -DskipTests -pl claims-domain,claims-api
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine
@@ -25,7 +23,7 @@ RUN addgroup -g 1001 -S appgroup && \
 
 WORKDIR /app
 
-COPY --from=builder /app/claims-api/target/${JAR_FILE} app.jar
+COPY --from=builder /app/claims-api/target/claims-api-1.0.0-SNAPSHOT.jar app.jar
 
 # Set ownership
 RUN chown -R appuser:appgroup /app

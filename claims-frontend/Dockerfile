@@ -24,7 +24,9 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 RUN chown -R appuser:appgroup /usr/share/nginx/html && \
     chown -R appuser:appgroup /etc/nginx
 
-USER appuser
+# Create nginx cache dirs
+RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp && \
+    chown -R nginx:nginx /var/cache/nginx
 
 EXPOSE 80
 

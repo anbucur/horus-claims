@@ -1,5 +1,7 @@
 services:
   postgres:
+    networks:
+      - claims-network
     image: postgres:16-alpine
     container_name: claims-postgres
     environment:
@@ -59,7 +61,7 @@ services:
       context: .
       dockerfile: claims-api/Dockerfile
       args:
-        JAR_FILE: claims-api-*.jar
+        JAR_FILE: claims-api-1.0.0-SNAPSHOT.jar
         APP_VERSION: "1.0.0"
     container_name: claims-api
     environment:
@@ -90,6 +92,8 @@ services:
         reservations:
           memory: 512M
     restart: on-failure
+    networks:
+      - claims-network
 
   frontend:
     build:
@@ -97,7 +101,7 @@ services:
       dockerfile: Dockerfile
     container_name: claims-frontend
     ports:
-      - "3000:80"
+      - "3002:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
       interval: 30s
@@ -112,6 +116,8 @@ services:
           memory: 256M
           cpus: '0.5'
     restart: on-failure
+    networks:
+      - claims-network
 
   nginx:
     image: nginx:alpine
@@ -124,3 +130,9 @@ services:
       - api
       - frontend
     restart: unless-stopped
+    networks:
+      - claims-network
+
+networks:
+  claims-network:
+    driver: bridge

@@ -23,6 +23,10 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
         default_schema: public
+        autocommit: false
+        packages:
+          scan:
+            - com.msig.claimsdomain.entities
     open-in-view: false
 
   flyway:
