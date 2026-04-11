@@ -17,8 +17,8 @@ import com.azure.core.util.polling.SyncPoller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.msig.claimsapi.config.DocumentIntelligenceConfig;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.*;
 
@@ -40,7 +40,6 @@ import java.util.*;
  */
 @Service
 @Slf4j
-@ConditionalOnProperty(name = "claims.document-intelligence.enabled", havingValue = "true")
 public class DocumentExtractionService {
 
     private final DocumentIntelligenceConfig config;
@@ -48,7 +47,7 @@ public class DocumentExtractionService {
     private final ObjectMapper objectMapper;
 
     public DocumentExtractionService(DocumentIntelligenceConfig config,
-                                     DocumentIntelligenceClient documentIntelligenceClient,
+                                     @Autowired(required=false) DocumentIntelligenceClient documentIntelligenceClient,
                                      ObjectMapper objectMapper) {
         this.config = config;
         this.client = documentIntelligenceClient;
@@ -65,6 +64,10 @@ public class DocumentExtractionService {
      * @return RawDocumentContent with all extracted text, tables, key-value pairs, entities
      */
     public RawDocumentContent analyseDocument(byte[] documentBytes, String fileName) {
+        if (client == null) {
+            log.warn("[DocIntel] Document Intelligence not configured. Set claims.document-intelligence.endpoint to enable.");
+            return RawDocumentContent.failed(fileName, "Document extraction unavailable - Azure not configured");
+        }
         log.info("[DocIntel] Analysing document ({} bytes): {}", documentBytes.length, fileName);
 
         try {
@@ -88,6 +91,10 @@ public class DocumentExtractionService {
      * Analyse a document from a publicly accessible URL.
      */
     public RawDocumentContent analyseDocumentFromUrl(String documentUrl, String fileName) {
+        if (client == null) {
+            log.warn("[DocIntel] Document Intelligence not configured. Set claims.document-intelligence.endpoint to enable.");
+            return RawDocumentContent.failed(fileName, "Document extraction unavailable - Azure not configured");
+        }
         log.info("[DocIntel] Analysing document from URL: {}", documentUrl);
 
         try {

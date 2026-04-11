@@ -42,8 +42,9 @@ public class DocumentIntelligenceConfig {
     @Bean
     public DocumentIntelligenceClient documentIntelligenceClient() {
         if (endpoint == null || endpoint.isBlank()) {
-            throw new IllegalStateException(
-                "Document Intelligence endpoint is required. Set DOCUMENT_INTELLIGENCE_ENDPOINT.");
+            log.warn("[DocIntel] Document Intelligence endpoint not configured. "
+                    + "Set claims.document-intelligence.endpoint to enable document extraction.");
+            return null;
         }
 
         log.info("[DocIntel] Building DocumentIntelligenceClient → {}", endpoint);

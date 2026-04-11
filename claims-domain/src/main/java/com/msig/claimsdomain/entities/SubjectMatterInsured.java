@@ -1,5 +1,6 @@
 package com.msig.claimsdomain.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -22,6 +23,7 @@ public class SubjectMatterInsured {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "claim_id", nullable = false)
+    @JsonIgnoreProperties("claim")
     private Claim claim;
 
     @Enumerated(EnumType.STRING)

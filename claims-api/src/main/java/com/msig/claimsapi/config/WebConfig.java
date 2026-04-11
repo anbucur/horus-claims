@@ -1,6 +1,8 @@
 package com.msig.claimsapi.config;
 
+import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,14 +18,14 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
-                .allowedOrigins("http://localhost:5173", "http://localhost:80")
+                .allowedOrigins("http://localhost:5173", "http://localhost:80", "http://localhost:3002")
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true)
                 .maxAge(3600);
         
         registry.addMapping("/ws/**")
-                .allowedOrigins("http://localhost:5173", "http://localhost:80")
+                .allowedOrigins("http://localhost:5173", "http://localhost:80", "http://localhost:3002")
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true)
@@ -35,6 +37,9 @@ public class WebConfig implements WebMvcConfigurer {
     public ObjectMapper objectMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
+        mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
+        JsonFactory factory = mapper.getFactory();
+        factory.setCharacterEscapes(null);
         return mapper;
     }
 

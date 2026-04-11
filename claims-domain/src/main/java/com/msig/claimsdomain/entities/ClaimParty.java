@@ -1,5 +1,6 @@
 package com.msig.claimsdomain.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -22,6 +23,7 @@ public class ClaimParty {
     @ManyToOne(fetch = FetchType.LAZY)
     @MapsId("claimId")
     @JoinColumn(name = "claim_id")
+    @JsonIgnoreProperties("claimParties")
     private Claim claim;
 
     @ManyToOne(fetch = FetchType.LAZY)

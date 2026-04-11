@@ -1,5 +1,7 @@
 package com.msig.claimsdomain.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -47,6 +49,7 @@ public class Party {
 
     @OneToMany(mappedBy = "party", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
+    @JsonIgnoreProperties("party")
     private List<ClaimParty> claimParties = new ArrayList<>();
 
     public enum PartyType {

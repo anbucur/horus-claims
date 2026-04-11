@@ -89,9 +89,9 @@ export default function Dashboard() {
             { label: 'Fraud Flags', value: '—', sub: 'Requires forensics module', color: 'text-status-critical' },
           ].map(({ label, value, sub, color }) => (
             <div key={label} className="card p-4 border border-slate-200 hover:border-slate-300 transition-colors">
-              <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-2">{label}</div>
-              <div className={`text-2xl font-bold tabular-nums ${color}`}>{value}</div>
-              <div className="text-xs text-slate-400 mt-1.5">{sub}</div>
+              <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide mb-1">{label}</div>
+              <div className={`text-[28px] leading-7 font-bold tabular-nums ${color}`}>{value}</div>
+              <div className="text-[11px] text-slate-400 mt-1">{sub}</div>
             </div>
           ))}
         </div>
@@ -108,15 +108,15 @@ export default function Dashboard() {
           </div>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50">
+              <tr className="border-b-2 border-slate-200 bg-white">
                 {['Claim ID', 'Insured', 'Vessel', 'LOB', 'Status', 'Date of Loss'].map(h => (
-                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide">{h}</th>
+                  <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {(displayClaims || []).map((claim, i) => (
-                <tr key={claim.id} className={`border-b border-slate-100 hover:bg-slate-50 ${i % 2 === 1 ? 'bg-slate-50/40' : ''}`}>
+              {(displayClaims || []).map((claim) => (
+                <tr key={claim.id} className="border-b border-slate-100 hover:bg-slate-50/70 transition-colors">
                   <td className="px-4 py-2.5 font-medium text-brand-primary tabular-nums text-xs">{claim.claimNumber}</td>
                   <td className="px-4 py-2.5 text-slate-700 text-xs">{claim.insuredName || '—'}</td>
                   <td className="px-4 py-2.5 text-slate-900 font-semibold tabular-nums text-xs">{claim.vesselName || '—'}</td>

@@ -1,5 +1,6 @@
 package com.msig.claimsdomain.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -23,6 +24,7 @@ public class SettlementAction {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "claim_id")
+    @JsonIgnoreProperties("claim")
     private Claim claim;
 
     @Column(nullable = false, length = 20)

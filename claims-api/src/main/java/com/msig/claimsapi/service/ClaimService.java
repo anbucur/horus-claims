@@ -22,7 +22,7 @@ public class ClaimService {
 
     @Transactional(readOnly = true)
     public List<Claim> findAll() {
-        return claimRepository.findAll();
+        return claimRepository.findAllWithEagerFetch();
     }
 
     @Transactional(readOnly = true)

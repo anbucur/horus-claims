@@ -28,7 +28,7 @@ import java.util.List;
  * The result is then mapped to the domain ExtractedClaimData model.
  */
 @Service
-@ConditionalOnProperty(name = "claims.processing.ai-enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "claims.azure.ai.enabled", havingValue = "true")
 @RequiredArgsConstructor
 @Slf4j
 public class DefaultAIOrchestrationService implements AIOrchestrationService {

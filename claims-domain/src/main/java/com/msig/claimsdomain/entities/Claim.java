@@ -1,5 +1,7 @@
 package com.msig.claimsdomain.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -10,7 +12,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "claim", indexes = {
@@ -30,6 +34,7 @@ public class Claim {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "policy_id", nullable = false)
+    @JsonIgnoreProperties({"claims", "policyHolder", "effectiveDate", "expirationDate"})
     private Policy policy;
 
     @Column(nullable = false)
@@ -69,27 +74,32 @@ public class Claim {
 
     @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
-    private List<SubjectMatterInsured> subjectMattersInsured = new ArrayList<>();
+    @JsonIgnore
+    private Set<ClaimParty> claimParties = new HashSet<>();
 
     @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
-    private List<Financials> financials = new ArrayList<>();
-
-    @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @Builder.Default
-    private List<Evidence> evidences = new ArrayList<>();
-
-    @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @Builder.Default
-    private List<ClaimParty> claimParties = new ArrayList<>();
-
-    @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @Builder.Default
+    @JsonIgnore
     private List<ClaimReview> claimReviews = new ArrayList<>();
 
     @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
+    @JsonIgnore
     private List<ClaimStatusHistory> statusHistory = new ArrayList<>();
+
+    @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @Builder.Default
+    private Set<SubjectMatterInsured> subjectMattersInsured = new HashSet<>();
+
+    @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @Builder.Default
+    @JsonIgnore
+    private List<Financials> financials = new ArrayList<>();
+
+    @OneToMany(mappedBy = "claim", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @Builder.Default
+    @JsonIgnore
+    private List<Evidence> evidences = new ArrayList<>();
 
     public enum WorkflowStatus {
         RECEIVED, EXTRACTING, VERIFYING, HITL, STP, APPROVED, REJECTED, COMPLETED

@@ -1,5 +1,7 @@
 package com.msig.claimsapi.controller;
 
+import com.msig.claimsapi.dto.ClaimSummaryDto;
+import com.msig.claimsapi.repository.ClaimRepository;
 import com.msig.claimsapi.service.ClaimService;
 import com.msig.claimsapi.service.audit.ClaimAuditService;
 import com.msig.claimsdomain.entities.Claim;
@@ -16,10 +18,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import com.msig.claimsdomain.entities.ClaimStatusHistory;
-
-import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+
+import com.msig.claimsdomain.entities.ClaimStatusHistory;
 
 @RestController
 @RequestMapping("/api/claims")
@@ -29,14 +31,30 @@ import java.util.Map;
 public class ClaimController {
 
     private final ClaimService claimService;
+    private final ClaimRepository claimRepository;
     private final ClaimAuditService auditService;
 
     @GetMapping
     @Operation(summary = "Get all claims")
     @ApiResponses(@ApiResponse(responseCode = "200", description = "List of all claims"))
-    public ResponseEntity<List<Claim>> getAllClaims() {
+    public ResponseEntity<List<ClaimSummaryDto>> getAllClaims() {
         log.debug("GET /api/claims - retrieving all claims");
-        return ResponseEntity.ok(claimService.findAll());
+        List<ClaimSummaryDto> summaries = claimRepository.findAllClaimSummaries().stream()
+            .map(row -> ClaimSummaryDto.builder()
+                .id(((Number) row[0]).longValue())
+                .claimNumber("CLM-" + String.format("%03d", ((Number) row[0]).longValue()))
+                .workflowStatus((String) row[1])
+                .dateOfLoss(row[2] != null ? java.time.LocalDate.parse(row[2].toString()) : null)
+                .estimatedValue(row[3] != null ? new java.math.BigDecimal(row[3].toString()) : null)
+                .currency(row[4] != null ? (String) row[4] : "EUR")
+                .createdAt(row[5] != null ? java.time.LocalDateTime.parse(row[5].toString().replace(" ", "T")) : null)
+                .updatedAt(row[6] != null ? java.time.LocalDateTime.parse(row[6].toString().replace(" ", "T")) : null)
+                .lineOfBusiness(row[9] != null ? (String) row[9] : "—")
+                .vesselName(row[11] != null ? (String) row[11] : "—")
+                .insuredName(row[12] != null ? (String) row[12] : "—")
+                .build())
+            .collect(java.util.stream.Collectors.toList());
+        return ResponseEntity.ok(summaries);
     }
 
     @GetMapping("/{id}")

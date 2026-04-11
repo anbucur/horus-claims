@@ -10,6 +10,7 @@ import com.msig.claimsdomain.entities.Evidence;
 import com.msig.claimsdomain.model.DocumentExtractionResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -35,6 +36,7 @@ import java.util.Map;
 @RequestMapping("/api/documents")
 @RequiredArgsConstructor
 @Slf4j
+@ConditionalOnProperty(name = "claims.azure.ai.enabled", havingValue = "true")
 public class DocumentExtractionController {
 
     private final DocumentExtractionService documentService;

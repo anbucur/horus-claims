@@ -14,7 +14,7 @@ const navItems = [
 
 export default function Layout() {
   return (
-    <div className="flex h-screen bg-surface-bg">
+    <div className="flex h-screen bg-[#F4F7F9]">
       <aside className="w-[240px] bg-brand-primary flex flex-col shrink-0">
         <div className="h-12 flex items-center px-4 border-b border-blue-800">
           <span className="text-white font-semibold text-sm tracking-wide">MSIG CLAIMS</span>
@@ -25,15 +25,15 @@ export default function Layout() {
               key={to}
               to={to}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+                `flex items-center gap-3 px-4 py-2 text-[13px] transition-colors ${
                   isActive
-                    ? 'bg-blue-800 text-white'
+                    ? 'bg-[#E8F0FE] text-[#0033A0] font-semibold'
                     : 'text-blue-200 hover:bg-blue-800 hover:text-white'
                 }`
               }
             >
               <Icon />
-              {label}
+              <span>{label}</span>
             </NavLink>
           ))}
         </nav>
@@ -41,7 +41,7 @@ export default function Layout() {
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-12 bg-surface-panel border-b border-slate-200 flex items-center px-4 gap-4 shrink-0">
-          <div className="text-xs text-slate-500">Claims / Dashboard</div>
+          <div className="text-xs text-[#8E9AAC] font-medium">Claims / Dashboard</div>
           <div className="flex-1" />
           <div className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">

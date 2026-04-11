@@ -12,7 +12,7 @@ export default {
           secondary: '#00A3E0',
         },
         surface: {
-          bg: '#F8FAFC',
+          bg: '#F4F7F9',
           panel: '#FFFFFF',
         },
         status: {

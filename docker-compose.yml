@@ -56,6 +56,17 @@ services:
           memory: 256M
           cpus: '0.25'
 
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: claims-valkey
+    networks:
+      - claims-network
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: .
@@ -69,8 +80,11 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: claims
-      DB_USER: claims_user
+      DB_USERNAME: claims_user
       DB_PASSWORD: ${DB_PASSWORD:-claims_secure_pass}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_FLYWAY_ENABLED: "true"
+      LOGGING_LEVEL_FLYWAY: DEBUG
     ports:
       - "8080:8080"
     healthcheck:
@@ -84,6 +98,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_started
+      valkey:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -99,6 +115,8 @@ services:
     build:
       context: ./claims-frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
     container_name: claims-frontend
     ports:
       - "3002:80"
